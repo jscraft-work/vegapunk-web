@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config import get_settings
-from app.db import make_pool, run_migrations
+from app.db import ensure_extensions, make_pool, run_migrations
 from app.deps import require_user
 from app.routes import auth, chat, distill, health, notes
 from app.session import COOKIE_NAME, MemoryStore, get_session
@@ -46,6 +46,7 @@ def _build_oauth(settings):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+    await ensure_extensions(settings.DATABASE_URL)
     pool = make_pool(settings.DATABASE_URL)
     await pool.open()
     await pool.wait()

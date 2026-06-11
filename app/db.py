@@ -21,14 +21,29 @@ _MIGRATION_RE = re.compile(r"^(\d{4})_.*\.sql$")
 async def _configure(conn: psycopg.AsyncConnection) -> None:
     """연결마다 호출: pgvector 어댑터 등록.
 
-    vector 확장이 아직 없으면(최초 마이그레이션 전) 등록을 건너뛴다.
-    마이그레이션 후 새로 빌리는 연결부터는 정상 등록된다.
+    정상 경로에선 ensure_extensions로 vector 확장이 먼저 생성돼 있다.
+    혹시 없더라도 풀이 죽지 않도록 등록 실패를 흡수한다(방어).
     """
     try:
         await register_vector_async(conn)
-    except psycopg.errors.UndefinedObject:
-        # vector 타입 미존재(확장 미설치). 마이그레이션 이후 연결에서 등록됨.
+    except (psycopg.errors.UndefinedObject, psycopg.ProgrammingError):
+        # vector 타입 미존재. register_vector_async는 ProgrammingError를 던진다.
         await conn.rollback()
+
+
+async def ensure_extensions(dsn: str) -> None:
+    """풀을 열기 전에 필수 확장을 보장한다.
+
+    pgvector 어댑터 등록(_configure)은 vector 타입이 존재해야 하므로,
+    풀 연결이 생기기 전에 raw 연결로 CREATE EXTENSION을 먼저 실행한다.
+    prod는 이미 설치돼 있어 no-op, 빈 DB(CI/신규)는 여기서 생성된다.
+    """
+    conn = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
+    try:
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_bigm")
+    finally:
+        await conn.close()
 
 
 def make_pool(dsn: str, *, open: bool = False) -> AsyncConnectionPool:

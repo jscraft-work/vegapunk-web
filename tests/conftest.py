@@ -11,7 +11,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.config import get_settings
-from app.db import make_pool, run_migrations
+from app.db import ensure_extensions, make_pool, run_migrations
 from app.main import create_app
 
 # 테스트가 잡아야 할 테이블(스키마 테이블 제외)
@@ -41,6 +41,7 @@ async def migrated_pool():
     # get_settings는 lru_cache이므로 환경변수가 반영되도록 초기화
     os.environ.setdefault("DATABASE_URL", _test_dsn())
     get_settings.cache_clear()
+    await ensure_extensions(_test_dsn())
     pool = make_pool(_test_dsn())
     await pool.open()
     await pool.wait()
