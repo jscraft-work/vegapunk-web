@@ -30,10 +30,18 @@ jobs:
       - name: Install deps
         run: uv sync --extra dev
 
+      # e5-large(~2GB) 모델 캐시 — 첫 런만 다운로드, 이후 복원(테스트 16분→수십초).
+      - name: Cache fastembed model
+        uses: actions/cache@v4
+        with:
+          path: .fastembed_cache
+          key: fastembed-multilingual-e5-large
+
       - name: Run tests
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:55432/vegapunk_test
           REDIS_URL: redis://localhost:6379
+          FASTEMBED_CACHE: .fastembed_cache
         run: uv run pytest -q
 
   build-and-push:
@@ -44,6 +52,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -53,6 +62,8 @@ jobs:
         with:
           context: .                 # 모델 프리페치 포함된 Dockerfile
           push: true
+          cache-from: type=gha       # 모델 프리페치 레이어 재사용(빌드 가속)
+          cache-to: type=gha,mode=max
           tags: |
             ghcr.io/${{ github.repository_owner }}/vegapunk-web:latest
             ghcr.io/${{ github.repository_owner }}/vegapunk-web:${{ github.sha }}
