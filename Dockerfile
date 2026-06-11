@@ -16,7 +16,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 # fastembed 모델(~2GB) 프리페치 — 소스와 무관(앱 import 대신 fastembed 직접 호출).
 # COPY app 앞에 둬서 앱 코드가 바뀌어도 이 레이어 캐시가 유지된다(uv.lock에만 의존).
 # 모델명/캐시경로는 app/embedding.py 와 일치해야 함.
-RUN uv run python -c "from fastembed import TextEmbedding; TextEmbedding('intfloat/multilingual-e5-large', cache_dir='/app/.fastembed_cache')"
+# venv 파이썬 직접 호출(uv run은 프로젝트 설치를 시도 → app/ 아직 없어 실패).
+RUN /app/.venv/bin/python -c "from fastembed import TextEmbedding; TextEmbedding('intfloat/multilingual-e5-large', cache_dir='/app/.fastembed_cache')"
 
 # 소스.
 COPY app ./app
