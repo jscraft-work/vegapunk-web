@@ -9,14 +9,17 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 RUN pip install --no-cache-dir uv
 
-# 레이어 캐시: lock 먼저 복사 → 설치 → 소스 복사.
+# 레이어 캐시: lock 먼저 복사 → 의존성만 설치(프로젝트 자체는 소스 복사 후).
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --no-install-project
 
 # 소스.
 COPY app ./app
 COPY migrations ./migrations
 COPY static ./static
+
+# 소스 들어온 뒤 프로젝트(vegapunk) 설치.
+RUN uv sync --frozen --no-dev
 
 # fastembed 모델을 이미지에 미리 받아둔다(uv.lock 고정 버전으로 — 풀링 일관성).
 RUN uv run python -c "from app import embedding; embedding._get_model()"
