@@ -370,56 +370,95 @@ const distillBodyEl = document.getElementById("distill-body");
 const distillHint = document.getElementById("distill-hint");
 const distillSave = document.getElementById("distill-save");
 
+let distillCands = [];  // 현재 distill 후보들(merge_target 포함)
+
 async function openDistill() {
   if (!currentConvId) { alert("저장할 대화가 없어요. 먼저 대화를 시작하세요."); return; }
   distillOverlay.classList.remove("hidden");
   distillBodyEl.innerHTML = `<div class="distill-empty">대화를 토픽별로 정리하는 중…</div>`;
   distillHint.textContent = "";
   distillSave.disabled = true;
-  let pages = [];
   try {
     const r = await fetch("/api/distill", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conv_id: currentConvId }),
     });
-    pages = (await r.json()).candidates || [];
-  } catch { pages = []; }
-  if (!pages.length) {
+    distillCands = (await r.json()).candidates || [];
+  } catch { distillCands = []; }
+  if (!distillCands.length) {
     distillBodyEl.innerHTML = `<div class="distill-empty">저장할 만한 내용을 못 찾았어요.</div>`;
     return;
   }
   distillBodyEl.innerHTML = "";
-  for (const p of pages) {
-    const exists = knownTitles.has(p.title);
+  distillCands.forEach((p, i) => {
+    const mt = p.merge_target;
     const div = document.createElement("div");
     div.className = "distill-page";
+    div.dataset.idx = i;
+    // 병합 대상이 있으면 라디오(기본=새 노트, 병합은 선택 시 lazy 미리보기).
+    const mergeUI = mt
+      ? `<div class="d-merge">` +
+        `<label><input type="radio" name="m${i}" value="merge"> 기존 「${escapeHtml(mt.title)}」에 병합 <span class="sim">${Math.round((mt.similarity || 0) * 100)}%</span></label>` +
+        `<label><input type="radio" name="m${i}" value="new" checked> 새 노트</label>` +
+        `</div>`
+      : ``;
     div.innerHTML =
-      `<div class="distill-page-head"><input type="checkbox" checked>` +
-      `<input type="text" class="d-title">` +
-      (exists ? `<span class="exists">기존에 병합</span>` : ``) +
-      `</div><textarea class="d-body" rows="6"></textarea>` +
+      `<div class="distill-page-head"><input type="checkbox" class="d-inc" checked>` +
+      `<input type="text" class="d-title"></div>` +
+      mergeUI +
+      `<textarea class="d-body" rows="6"></textarea>` +
+      `<pre class="d-diff hidden"></pre>` +
       `<input type="text" class="d-tags" placeholder="태그 (쉼표로 구분)">`;
-    div.querySelector(".d-title").value = p.title;     // 속성 인젝션 회피 위해 property로
+    div.querySelector(".d-title").value = p.title;
     div.querySelector(".d-body").value = p.body;
     div.querySelector(".d-tags").value = (p.tags || []).join(", ");
     distillBodyEl.appendChild(div);
-  }
-  distillHint.textContent = `${pages.length}개 페이지 제안됨 — 수정·선택 후 저장`;
+  });
+  distillHint.textContent = `${distillCands.length}개 후보 — 병합/새노트 선택 후 저장`;
   distillSave.disabled = false;
 }
 
+// 병합 라디오 선택 시 → merge-preview(통합본+diff) lazy 로드
+distillBodyEl.addEventListener("change", async (e) => {
+  const radio = e.target.closest("input[type=radio]");
+  if (!radio) return;
+  const row = radio.closest(".distill-page");
+  const cand = distillCands[+row.dataset.idx];
+  const bodyEl = row.querySelector(".d-body");
+  const diffEl = row.querySelector(".d-diff");
+  if (radio.value === "merge") {
+    diffEl.textContent = "통합 미리보기 생성 중…";
+    diffEl.classList.remove("hidden");
+    try {
+      const r = await fetch("/api/notes/merge-preview", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target_note_id: cand.merge_target.note_id, candidate_body: bodyEl.value }),
+      });
+      const { merged_body, diff } = await r.json();
+      bodyEl.value = merged_body;             // 통합본으로 교체(편집 가능)
+      diffEl.textContent = diff || "(변경 없음)";
+    } catch { diffEl.textContent = "미리보기 실패"; }
+  } else {  // 새 노트 → 원본 본문 복원, diff 숨김
+    bodyEl.value = cand.body;
+    diffEl.classList.add("hidden");
+    diffEl.textContent = "";
+  }
+});
+
 distillSave.onclick = async () => {
-  const rows = [...distillBodyEl.querySelectorAll(".distill-page")]
-    .filter((r) => r.querySelector("input[type=checkbox]").checked);
   distillSave.disabled = true;
-  for (const r of rows) {
-    const title = r.querySelector(".d-title").value.trim();
-    const body = r.querySelector(".d-body").value;
-    const tags = r.querySelector(".d-tags").value.split(",").map((s) => s.trim()).filter(Boolean);
+  for (const row of distillBodyEl.querySelectorAll(".distill-page")) {
+    if (!row.querySelector(".d-inc").checked) continue;
+    const cand = distillCands[+row.dataset.idx];
+    const title = row.querySelector(".d-title").value.trim();
+    const body = row.querySelector(".d-body").value;
+    const tags = row.querySelector(".d-tags").value.split(",").map((s) => s.trim()).filter(Boolean);
     if (!title) continue;
+    const mergeRadio = row.querySelector("input[type=radio][value=merge]");
+    const merge_into = (mergeRadio && mergeRadio.checked) ? cand.merge_target.note_id : null;
     await fetch("/api/ingest", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, body, tags, merge_into: null }),
+      body: JSON.stringify({ title, body, tags, merge_into }),
     });
   }
   distillOverlay.classList.add("hidden");

@@ -263,3 +263,10 @@ body {
 #debug-pre { flex: 1; overflow: auto; margin: 0; padding: 16px; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .chip.debug-chip { color: var(--muted); border-color: var(--border); }
 .chip.debug-chip:hover { color: var(--text); }
+
+/* distill 스마트 병합 */
+.d-merge { display: flex; gap: 14px; margin-bottom: 8px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+.d-merge label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.d-merge .sim { color: #d2a24c; }
+.d-diff { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin-top: 8px; font-size: 11px; line-height: 1.5; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+.d-diff.hidden { display: none; }
