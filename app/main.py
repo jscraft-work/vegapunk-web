@@ -20,11 +20,11 @@ def _build_oauth(settings):
     from authlib.integrations.starlette_client import OAuth
 
     oauth = OAuth()
-    if settings.GITHUB_CLIENT_ID:
+    if settings.GH_CLIENT_ID:
         oauth.register(
             name="github",
-            client_id=settings.GITHUB_CLIENT_ID,
-            client_secret=settings.GITHUB_CLIENT_SECRET,
+            client_id=settings.GH_CLIENT_ID,
+            client_secret=settings.GH_CLIENT_SECRET,
             access_token_url="https://github.com/login/oauth/access_token",
             authorize_url="https://github.com/login/oauth/authorize",
             api_base_url="https://api.github.com/",

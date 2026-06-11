@@ -19,7 +19,7 @@ class Settings(BaseSettings):
 
     # ── openclaw LLM (Task 05) ──────────────────────────────
     # 호스트 래퍼 엔드포인트/인증. session_id는 절대 전송하지 않음(무상태).
-    OPENCLAW_BASE_URL: str = "http://localhost:8080"
+    OPENCLAW_BASE_URL: str = "http://host.docker.internal:18000"  # prod openclaw(/ask)
     OPENCLAW_API_KEY: str = ""
     # tier → openclaw level 매핑. /ask는 'normal' 또는 'high'만 허용(low 없음).
     # normal=빠름(다시쓰기/제목), high=답변/요약(nanobot). 옛 prod=high.
@@ -29,9 +29,10 @@ class Settings(BaseSettings):
     # ── 인증/세션 (Task 10) ─────────────────────────────────
     SECRET_KEY: str = "dev-secret-change-me"  # SessionMiddleware(authlib state)용
     SESSION_TTL: int = 60 * 60 * 24 * 14  # 세션 쿠키/Redis TTL(초)
-    OAUTH_REDIRECT_BASE: str = "http://localhost:8000"
-    GITHUB_CLIENT_ID: str = ""
-    GITHUB_CLIENT_SECRET: str = ""
+    OAUTH_REDIRECT_BASE: str = "https://vegapunk.jscraft.work"
+    # GitHub Actions는 GITHUB_ 접두 시크릿 금지 → GH_ 접두 사용.
+    GH_CLIENT_ID: str = ""
+    GH_CLIENT_SECRET: str = ""
     KAKAO_REST_API_KEY: str = ""
     KAKAO_CLIENT_SECRET: str = ""
 
