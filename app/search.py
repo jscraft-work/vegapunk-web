@@ -14,11 +14,14 @@ from dataclasses import dataclass
 
 from pgvector import Vector
 
-from app import embedding
+from app import embedding, settings
 
 # ── 튜닝 상수 (기획서 10장 파라미터) ───────────────────────────
 CANDIDATES = 20  # 융합 후보 풀 크기
 TOP_K = 5  # 최종 반환 청크 수
+# 관련성 게이트(작은 KB에서 무관 노트가 끌려오는 것 방지). 거리 임계는 런타임
+# 조절값(settings: vec_dist_threshold, 기본 0.18). 둘 중 하나만 넘으면 유지.
+BIGM_KEEP = 0.30      # 강한 글자(bigram) 일치는 거리와 무관하게 유지
 RRF_K = 60  # RRF 상수(클수록 순위 차 완만)
 PER_LIST_K = CANDIDATES  # 개별 검색이 가져올 후보 수
 BIGM_SIMILARITY_LIMIT = 0.1  # pg_bigm 유사도 임계(짧은 한글 단문 대응)
@@ -80,13 +83,15 @@ def rrf(rank_lists: list[list[int]], k_const: int = RRF_K) -> list[tuple[int, fl
 
 async def _graph_expand(
     conn, note_ids: list[int], query: str, scores: dict[int, float]
-) -> None:
+) -> set[int]:
     """1-hop 이웃 노트의 질의 최근접 청크를 후보(scores)에 가산.
 
-    이웃 노트당 1청크로 상한. 이미 후보면 보너스만 더한다(in-place 갱신).
+    이웃 노트당 1청크로 상한. 추가한 청크 id 집합을 반환(관련성 게이트 면제용 —
+    링크로 끌어온 이웃은 직접 매칭이 아니어도 큐레이션된 맥락이므로 유지).
     """
+    added: set[int] = set()
     if not note_ids:
-        return
+        return added
     cur = await conn.execute(
         "SELECT DISTINCT dst_note FROM edges "
         "WHERE src_note = ANY(%s) AND dst_note IS NOT NULL "
@@ -95,7 +100,7 @@ async def _graph_expand(
     )
     neighbors = [r[0] for r in await cur.fetchall()]
     if not neighbors:
-        return
+        return added
 
     qvec = await embedding.aembed_query(query)
     for nid in neighbors:
@@ -111,6 +116,8 @@ async def _graph_expand(
             continue
         chunk_id = row[0]
         scores[chunk_id] = scores.get(chunk_id, 0.0) + GRAPH_NEIGHBOR_BONUS
+        added.add(chunk_id)
+    return added
 
 
 async def search(conn, query: str) -> list[SearchHit]:
@@ -126,11 +133,28 @@ async def search(conn, query: str) -> list[SearchHit]:
     fused = rrf([[c for c, _, _ in vec], [c for c, _, _ in big]])
     scores = dict(fused[:CANDIDATES])
 
-    # 후보 노트 기준 1-hop 그래프 확장.
+    # 후보 노트 기준 1-hop 그래프 확장(추가된 이웃 청크는 게이트 면제).
     cand_notes = list({note_of[cid] for cid in scores if cid in note_of})
-    await _graph_expand(conn, cand_notes, query, scores)
+    graph_chunks = await _graph_expand(conn, cand_notes, query, scores)
 
-    top = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:TOP_K]
+    # 관련성 게이트: 의미(거리)나 글자(bigram)로 충분히 가깝거나, 그래프 이웃만 남긴다.
+    vec_dist = {cid: d for cid, _, d in vec}
+    bigm_score = {cid: s for cid, _, s in big}
+
+    max_vec_dist = settings.get("vec_dist_threshold")  # 런타임 조절값(즉시반영)
+
+    def _relevant(cid: int) -> bool:
+        return (
+            cid in graph_chunks
+            or vec_dist.get(cid, 9.0) <= max_vec_dist
+            or bigm_score.get(cid, 0.0) >= BIGM_KEEP
+        )
+
+    top = [
+        (cid, sc)
+        for cid, sc in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        if _relevant(cid)
+    ][:TOP_K]
     if not top:
         return []
 

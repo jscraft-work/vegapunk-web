@@ -182,6 +182,28 @@ function openDebug(prompt) {
 document.getElementById("debug-close").onclick = () =>
   document.getElementById("debug-overlay").classList.add("hidden");
 
+// ---- 설정 (검색 관련성 임계 등, 즉시 반영) ----
+const settingsOverlay = document.getElementById("settings-overlay");
+const setVecdist = document.getElementById("set-vecdist");
+const setVecdistVal = document.getElementById("set-vecdist-val");
+async function openSettings() {
+  try {
+    const s = await (await fetch("/api/settings")).json();
+    setVecdist.value = s.vec_dist_threshold;
+    setVecdistVal.textContent = (+s.vec_dist_threshold).toFixed(2);
+  } catch { /* ignore */ }
+  settingsOverlay.classList.remove("hidden");
+}
+document.getElementById("settings-btn").onclick = openSettings;
+document.getElementById("settings-close").onclick = () => settingsOverlay.classList.add("hidden");
+setVecdist.addEventListener("input", () => { setVecdistVal.textContent = (+setVecdist.value).toFixed(2); });
+setVecdist.addEventListener("change", async () => {  // 슬라이더 놓는 즉시 서버 반영
+  await fetch("/api/settings", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ vec_dist_threshold: +setVecdist.value }),
+  });
+});
+
 let currentConvId = null;
 let activeES = null;  // 현재 포그라운드 스트림. 대화 전환 시 null 로 백그라운드화.
 

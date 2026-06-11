@@ -16,6 +16,7 @@
       <button class="gnb-item" data-space="knowledge">📄 지식</button>
     </nav>
     <div id="gnb-user"></div>
+    <button id="settings-btn" title="설정">⚙</button>
   </header>
   <div id="sidebar-backdrop"></div>
 
@@ -111,6 +112,22 @@
         <button id="debug-close">✕</button>
       </div>
       <pre id="debug-pre"></pre>
+    </div>
+  </div>
+
+  <div id="settings-overlay" class="hidden">
+    <div id="settings-modal">
+      <div class="settings-head">
+        <strong>⚙ 설정</strong>
+        <button id="settings-close">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="set-field">
+          <label>검색 관련성 거리 임계 <span id="set-vecdist-val" class="set-val"></span></label>
+          <input type="range" id="set-vecdist" min="0.05" max="0.40" step="0.01" />
+          <p class="set-hint">작을수록 엄격해서 관련성 높은 노트만 참고합니다. 이 거리보다 먼 노트는 참고자료에서 제외돼요. (변경 즉시 반영)</p>
+        </div>
+      </div>
     </div>
   </div>
 

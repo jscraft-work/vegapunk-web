@@ -9,6 +9,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
 from app import indexing, search
+from app import settings as app_settings
 from app.db import execute, fetch, fetchrow
 from app.ingest import ingest_note
 from app.llm import LLMClient, get_llm
@@ -125,6 +126,23 @@ async def backlinks_of(request: Request, title: str) -> dict:
         (note["id"],),
     )
     return {"backlinks": [r["title"] for r in rows]}
+
+
+# ── 런타임 설정 (즉시반영 + Redis 백업) ────────────────────────
+
+
+@router.get("/api/settings")
+async def read_settings(request: Request) -> dict:
+    return app_settings.all_settings()
+
+
+@router.post("/api/settings")
+async def write_settings(request: Request, body: dict) -> dict:
+    redis = getattr(request.app.state, "session_store", None)
+    for key in app_settings.all_settings():
+        if key in body:
+            await app_settings.update(redis, key, float(body[key]))
+    return app_settings.all_settings()
 
 
 # ── 노트 상세 (위키링크/백링크) ────────────────────────────────

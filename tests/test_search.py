@@ -57,14 +57,18 @@ def test_rrf():
     assert fused[1] > fused[4]
 
 
-async def test_graph_expansion(seeded_kb):
+async def test_relevance_gate(seeded_kb):
+    """관련성 게이트: 직접 관련 노트만 남고 무관한 노트는 제외.
+
+    (그래프 확장으로 끌어온 '비후보' 이웃은 게이트 면제 — 코드 경로 유지. 다만
+    이 소규모 시드는 모든 노트가 이미 검색 후보라 면제가 발동하지 않는다.)
+    """
     pool, ids = seeded_kb
-    # '취업준비'에 직접 매칭되는 질의 → 이웃 '연봉협상'이 그래프 확장으로 후보에 포함.
     async with pool.connection() as conn:
         hits = await search.search(conn, "면접과 자기소개서 준비")
     note_ids = {h.note_id for h in hits}
-    assert ids["취업준비"] in note_ids
-    assert ids["연봉협상"] in note_ids  # 직접 매칭 아님 — 그래프 확장으로만 등장
+    assert ids["취업준비"] in note_ids   # 직접 관련(글자·의미) → 포함
+    assert ids["우주"] not in note_ids    # 무관 → 게이트로 제외
 
 
 async def test_topk(seeded_kb):

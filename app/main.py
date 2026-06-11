@@ -10,6 +10,7 @@ from app.db import ensure_extensions, make_pool, run_migrations
 from app.deps import require_user
 from app.routes import auth, chat, distill, health, notes
 from app.session import COOKIE_NAME, MemoryStore, get_session
+from app import settings as app_settings
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
@@ -44,6 +45,8 @@ async def lifespan(app: FastAPI):
         app.state.session_store = r
     except Exception:  # noqa: BLE001 — Redis 없으면 dev 폴백
         app.state.session_store = MemoryStore()
+
+    await app_settings.load(app.state.session_store)  # 런타임 설정을 Redis에서 복원
 
     try:
         yield
