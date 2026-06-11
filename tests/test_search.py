@@ -71,6 +71,19 @@ async def test_relevance_gate(seeded_kb):
     assert ids["우주"] not in note_ids    # 무관 → 게이트로 제외
 
 
+async def test_graph_expand_query_runs(seeded_kb):
+    """이웃이 후보가 아닐 때 _graph_expand의 벡터 쿼리가 실제 실행돼도 안 깨짐.
+
+    (질의 벡터를 Vector로 안 감싸면 `vector <=> double precision[]` 연산자 불일치.)
+    """
+    pool, ids = seeded_kb
+    async with pool.connection() as conn:
+        added = await search._graph_expand(
+            conn, [ids["취업준비"]], "면접 준비와 자기소개서", {}
+        )
+    assert added  # 이웃 [[연봉협상]] 청크가 추가됨(쿼리 실행 성공)
+
+
 async def test_topk(seeded_kb):
     pool, _ = seeded_kb
     async with pool.connection() as conn:

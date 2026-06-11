@@ -102,7 +102,7 @@ async def _graph_expand(
     if not neighbors:
         return added
 
-    qvec = await embedding.aembed_query(query)
+    qvec = Vector(await embedding.aembed_query(query))  # pgvector 타입으로 (생 list면 <=> 연산자 불일치)
     for nid in neighbors:
         # 이웃 노트에서 질의에 가장 가까운 청크 1건.
         c = await conn.execute(
