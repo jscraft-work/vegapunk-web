@@ -51,7 +51,7 @@ class OpenclawClient(LLMClient):
         *,
         api_key: str = "",
         model_low: str = "low",
-        model_default: str = "default",
+        model_default: str = "normal",
         timeout: float = 60.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -75,56 +75,47 @@ class OpenclawClient(LLMClient):
             h["Authorization"] = f"Bearer {self._api_key}"
         return h
 
-    def _payload(self, prompt: str, tier: str, *, stream: bool) -> dict:
-        # 무상태 원칙: prompt + model + stream 만. session_id 등 대화상태 키 금지.
+    def _payload(self, prompt: str, tier: str) -> dict:
+        # 실제 openclaw 계약: POST /ask {prompt, level, timeout_seconds}.
+        # 무상태 원칙: session_id 등 대화상태 키는 절대 넣지 않는다.
         return {
             "prompt": prompt,
-            "model": self._model_for(tier),
-            "stream": stream,
+            "level": self._model_for(tier),
+            "timeout_seconds": int(self._timeout),
         }
 
-    async def complete(self, prompt: str, *, tier: str = "default") -> str:
-        payload = self._payload(prompt, tier, stream=False)
+    async def _ask(self, prompt: str, tier: str) -> str:
+        payload = self._payload(prompt, tier)
         # 외부 호출은 짧게 1회 재시도.
         last_exc: Exception | None = None
-        for attempt in range(2):
+        for _ in range(2):
             try:
                 async with self._http() as client:
                     resp = await client.post(
-                        f"{self._base_url}/complete",
+                        f"{self._base_url}/ask",
                         json=payload,
                         headers=self._headers(),
                     )
                     resp.raise_for_status()
                     data = resp.json()
-                return data["text"]
-            except (httpx.HTTPError, KeyError, ValueError) as exc:
+                text = data.get("text", "")
+                if not text:
+                    raise LLMError(f"openclaw 응답에 text 없음: {data}")
+                return text
+            except (httpx.HTTPError, ValueError) as exc:
                 last_exc = exc
-        raise LLMError(f"openclaw complete 실패: {last_exc}") from last_exc
+        raise LLMError(f"openclaw /ask 실패: {last_exc}") from last_exc
+
+    async def complete(self, prompt: str, *, tier: str = "default") -> str:
+        return await self._ask(prompt, tier)
 
     async def stream(
         self, prompt: str, *, tier: str = "default"
     ) -> AsyncIterator[str]:
-        payload = self._payload(prompt, tier, stream=True)
-        try:
-            async with self._http() as client:
-                async with client.stream(
-                    "POST",
-                    f"{self._base_url}/stream",
-                    json=payload,
-                    headers=self._headers(),
-                ) as resp:
-                    resp.raise_for_status()
-                    async for line in resp.aiter_lines():
-                        if not line:
-                            continue
-                        # openclaw SSE: "data: <delta>" 형태 가정.
-                        delta = line[6:] if line.startswith("data: ") else line
-                        if delta == "[DONE]":
-                            break
-                        yield delta
-        except httpx.HTTPError as exc:
-            raise LLMError(f"openclaw stream 실패: {exc}") from exc
+        # openclaw는 비스트리밍(단일 응답) → 전체 답을 한 덩이로 yield.
+        # FE는 answer 델타가 1개여도 정상 처리(기획서 6장: 래퍼 비스트리밍).
+        text = await self._ask(prompt, tier)
+        yield text
 
 
 # ── 테스트용 Fake ──────────────────────────────────────────────

@@ -33,6 +33,7 @@ async def test_no_session_id():
     captured = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = request.url.path
         captured["body"] = json.loads(request.content)
         return httpx.Response(200, json={"text": "ok"})
 
@@ -42,9 +43,10 @@ async def test_no_session_id():
     )
     await client.complete("안녕", tier="default")
 
+    assert captured["url"] == "/ask"
     body = captured["body"]
     assert body["prompt"] == "안녕"
-    assert body["model"] == "default"
+    assert body["level"] == "normal"
     # 무상태 원칙: 대화상태 키가 절대 없어야 한다.
     for forbidden in ("session_id", "session", "conversation_id", "history"):
         assert forbidden not in body
