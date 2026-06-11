@@ -1,0 +1,53 @@
+# app + db(pgvector+pg_bigm) + redis. 단일 사용자라 app 단일 컨테이너로 충분.
+# 기존 운영 Postgres/Redis 재사용 시 db/redis 서비스를 생략하고
+# DATABASE_URL/REDIS_URL만 주입하면 된다(docs/deploy.md 참고).
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://postgres:${DB_PASSWORD}@db:5432/vegapunk
+      REDIS_URL: redis://redis:6379
+      APP_ENV: prod
+      SECRET_KEY: ${SECRET_KEY}
+      OAUTH_REDIRECT_BASE: ${OAUTH_REDIRECT_BASE}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET}
+      OPENCLAW_BASE_URL: ${OPENCLAW_BASE_URL}
+      OPENCLAW_API_KEY: ${OPENCLAW_API_KEY}
+
+  db:
+    # 커스텀 이미지: 공식 postgres:16엔 pgvector·pg_bigm이 없어 직접 빌드.
+    image: jscraft/postgres-pgvector-bigm:pg16
+    build: ./infra/postgres-bigm
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: vegapunk
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+volumes:
+  dbdata:
+  redisdata:

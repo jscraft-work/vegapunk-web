@@ -1,0 +1,104 @@
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
+
+from app.config import get_settings
+from app.db import make_pool, run_migrations
+from app.deps import require_user
+from app.routes import auth, chat, distill, health, notes
+from app.session import COOKIE_NAME, MemoryStore, get_session
+
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+def _build_oauth(settings):
+    """authlib OAuth 레지스트리(자격 있는 프로바이더만 등록)."""
+    from authlib.integrations.starlette_client import OAuth
+
+    oauth = OAuth()
+    if settings.GITHUB_CLIENT_ID:
+        oauth.register(
+            name="github",
+            client_id=settings.GITHUB_CLIENT_ID,
+            client_secret=settings.GITHUB_CLIENT_SECRET,
+            access_token_url="https://github.com/login/oauth/access_token",
+            authorize_url="https://github.com/login/oauth/authorize",
+            api_base_url="https://api.github.com/",
+            client_kwargs={"scope": "read:user user:email"},
+        )
+    if settings.KAKAO_REST_API_KEY:
+        oauth.register(
+            name="kakao",
+            client_id=settings.KAKAO_REST_API_KEY,
+            client_secret=settings.KAKAO_CLIENT_SECRET,
+            access_token_url="https://kauth.kakao.com/oauth/token",
+            authorize_url="https://kauth.kakao.com/oauth/authorize",
+            api_base_url="https://kapi.kakao.com/",
+            client_kwargs={"scope": "account_email profile_nickname"},
+        )
+    return oauth
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    settings = get_settings()
+    pool = make_pool(settings.DATABASE_URL)
+    await pool.open()
+    await pool.wait()
+    app.state.pool = pool
+    await run_migrations(pool)
+
+    # 세션 저장소: Redis 우선, 미가용 시 인메모리 폴백.
+    try:
+        from redis.asyncio import from_url
+
+        r = from_url(settings.REDIS_URL)
+        await r.ping()
+        app.state.session_store = r
+    except Exception:  # noqa: BLE001 — Redis 없으면 dev 폴백
+        app.state.session_store = MemoryStore()
+
+    app.state.oauth = _build_oauth(settings)
+    try:
+        yield
+    finally:
+        await pool.close()
+
+
+def create_app() -> FastAPI:
+    settings = get_settings()
+    app = FastAPI(title="vegapunk", lifespan=lifespan)
+    app.add_middleware(SessionMiddleware, secret_key=settings.SECRET_KEY)
+
+    # 공개: health, auth.
+    app.include_router(health.router)
+    app.include_router(auth.router)
+    # 보호: /api/* (chat·distill·notes).
+    protected = [Depends(require_user)]
+    app.include_router(chat.router, dependencies=protected)
+    app.include_router(distill.router, dependencies=protected)
+    app.include_router(notes.router, dependencies=protected)
+
+    @app.get("/login")
+    async def login_page():
+        return FileResponse(_STATIC_DIR / "login.html")
+
+    @app.get("/")
+    async def index(request: Request):
+        # 미인증은 /login으로. 인증되면 SPA 셸.
+        token = request.cookies.get(COOKIE_NAME)
+        store = getattr(request.app.state, "session_store", None)
+        if not token or store is None or await get_session(store, token) is None:
+            return RedirectResponse(url="/login", status_code=302)
+        return FileResponse(_STATIC_DIR / "index.html")
+
+    if _STATIC_DIR.exists():
+        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    return app
+
+
+app = create_app()

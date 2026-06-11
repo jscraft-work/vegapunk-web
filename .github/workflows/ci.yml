@@ -1,0 +1,80 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pgvector+pg_bigm 커스텀 DB는 prebuilt services로 못 띄우므로 직접 빌드/실행.
+      - name: Build pgvector+bigm image
+        run: docker build -t vegapunk-db ./infra/postgres-bigm
+
+      - name: Start Postgres
+        run: |
+          docker run -d --name db \
+            -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=vegapunk_test \
+            -p 55432:5432 vegapunk-db
+
+      - name: Start Redis
+        run: docker run -d --name redis -p 6379:6379 redis:7
+
+      - name: Wait for Postgres
+        run: |
+          until docker exec db pg_isready -U postgres; do sleep 1; done
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install deps
+        run: uv sync --extra dev
+
+      - name: Run tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:55432/vegapunk_test
+          REDIS_URL: redis://localhost:6379
+        run: uv run pytest -q
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-24.04-arm        # 호스트(맥미니)와 동일 ARM 네이티브
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .                 # 모델 프리페치 포함된 Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/vegapunk-web:latest
+            ghcr.io/${{ github.repository_owner }}/vegapunk-web:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      # target "vegapunk" 으로 배포 → 리버스프록시 손 안 대고 도메인 승계.
+      # ⚠ 옛 vegapunk 레포의 deploy 워크플로는 비활성화할 것(같은 target 덮어쓰기 충돌 방지).
+      - name: Sync env + deploy
+        run: |
+          ENV_PAYLOAD=$(jq -nc --argjson env '${{ toJSON(secrets) }}' '{target: "vegapunk", env: $env, restart: false}')
+          ENV_SIG=$(echo -n "$ENV_PAYLOAD" | openssl dgst -sha256 -hmac "${{ secrets.WEBHOOK_SECRET }}" | awk '{print "sha256=" $2}')
+          curl -sf -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}/webhook/env-sync" \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: $ENV_SIG" \
+            -d "$ENV_PAYLOAD"
+
+          DEPLOY_PAYLOAD='{"image":"ghcr.io/${{ github.repository_owner }}/vegapunk-web:${{ github.sha }}"}'
+          DEPLOY_SIG=$(echo -n "$DEPLOY_PAYLOAD" | openssl dgst -sha256 -hmac "${{ secrets.WEBHOOK_SECRET }}" | awk '{print "sha256=" $2}')
+          curl -sf -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}/webhook/deploy" \
+            -H "Content-Type: application/json" \
+            -H "X-Hub-Signature-256: $DEPLOY_SIG" \
+            -d "$DEPLOY_PAYLOAD"

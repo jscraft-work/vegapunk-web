@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vegapunk</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="gnb">
+    <button id="drawer-toggle" class="icon-btn mobile-only" aria-label="메뉴">☰</button>
+    <nav class="tabs">
+      <a href="#/chat" data-tab="chat" class="tab">💬 채팅</a>
+      <a href="#/notes" data-tab="notes" class="tab">📄 지식</a>
+    </nav>
+    <span id="user-box" class="user-box"></span>
+  </header>
+
+  <div class="layout">
+    <aside id="sidebar" class="sidebar"></aside>
+    <main id="main" class="main"></main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="scrim" class="scrim" hidden></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+.venv
+.git
+.pytest_cache
+__pycache__
+*.pyc
+.fastembed_cache
+tests
+tasks
+기획서.md
+.env
+*.egg-info

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# 로컬 환경/시크릿
+.env
+.env.local
+
+# fastembed 모델 캐시
+.fastembed_cache/
+
+# OS
+.DS_Store
