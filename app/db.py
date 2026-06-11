@@ -40,8 +40,13 @@ async def ensure_extensions(dsn: str) -> None:
     """
     conn = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
     try:
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS pg_bigm")
+        for ext in ("vector", "pg_bigm"):
+            try:
+                await conn.execute(f"CREATE EXTENSION IF NOT EXISTS {ext}")
+            except psycopg.errors.InsufficientPrivilege:
+                # 비-슈퍼유저(전용 DB유저): 확장이 이미 설치돼 있으면 무해 —
+                # 풀의 register_vector가 기존 vector 타입을 그대로 쓴다.
+                pass
     finally:
         await conn.close()
 
