@@ -1,18 +1,15 @@
-"""인증 테스트 (OAuth 프로바이더 모킹)."""
+"""인증 테스트 (OAuth 외부호출 모킹, state는 Redis/MemoryStore)."""
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.main import create_app
 from app.routes import auth
-from app.session import MemoryStore
+from app.session import MemoryStore, stash_oauth_state
 
 
 @pytest_asyncio.fixture
 async def auth_client(migrated_pool, monkeypatch):
-    """인증 우회를 적용하지 않은 실제 보호 앱(401/콜백 흐름 검증용)."""
-    # 사용자 테이블 정리.
     async with migrated_pool.connection() as conn:
         await conn.execute("TRUNCATE users RESTART IDENTITY CASCADE")
         await conn.commit()
@@ -23,73 +20,80 @@ async def auth_client(migrated_pool, monkeypatch):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac, monkeypatch
+        yield ac, monkeypatch, app
+
+
+async def _login(ac, app, monkeypatch, profile):
+    """state 발급 + _fetch_profile 모킹 후 콜백 호출(로그인 성공 흐름)."""
+    provider = profile["provider"]
+    state = "teststate-" + profile["sub"]
+    await stash_oauth_state(app.state.session_store, state, provider)
+
+    async def fake_fetch(settings, prov, code):
+        return profile
+
+    monkeypatch.setattr(auth, "_fetch_profile", fake_fetch)
+    return await ac.get(f"/auth/callback/{provider}?code=x&state={state}")
 
 
 async def test_callback_creates_user_and_session(auth_client):
-    client, monkeypatch = auth_client
-
-    async def fake_oauth(request, provider):
-        return {"provider": "github", "sub": "42", "email": "u@gh.com", "name": "깃헙유저"}
-
-    monkeypatch.setattr(auth, "_complete_oauth", fake_oauth)
-
-    r = await client.get("/auth/callback/github")
+    ac, monkeypatch, app = auth_client
+    r = await _login(
+        ac, app, monkeypatch,
+        {"provider": "github", "sub": "42", "email": "u@gh.com", "name": "깃헙유저"},
+    )
     assert r.status_code == 302
     assert "session=" in r.headers.get("set-cookie", "")
-
-    # 세션 쿠키로 /auth/me → user 반환.
-    me = (await client.get("/auth/me")).json()
+    me = (await ac.get("/auth/me")).json()
     assert me["user"]["email"] == "u@gh.com"
 
 
 async def test_me(auth_client):
-    client, _ = auth_client
-    # 쿠키 없음 → null.
-    me = (await client.get("/auth/me")).json()
+    ac, _, _ = auth_client
+    me = (await ac.get("/auth/me")).json()
     assert me["user"] is None
 
 
 async def test_logout(auth_client):
-    client, monkeypatch = auth_client
-
-    async def fake_oauth(request, provider):
-        return {"provider": "github", "sub": "1", "email": "a@b.com", "name": "A"}
-
-    monkeypatch.setattr(auth, "_complete_oauth", fake_oauth)
-    await client.get("/auth/callback/github")
-    assert (await client.get("/auth/me")).json()["user"] is not None
-
-    await client.get("/auth/logout")
-    assert (await client.get("/auth/me")).json()["user"] is None
+    ac, monkeypatch, app = auth_client
+    await _login(
+        ac, app, monkeypatch,
+        {"provider": "github", "sub": "1", "email": "a@b.com", "name": "A"},
+    )
+    assert (await ac.get("/auth/me")).json()["user"] is not None
+    await ac.get("/auth/logout")
+    assert (await ac.get("/auth/me")).json()["user"] is None
 
 
 async def test_protected_routes(auth_client):
-    client, monkeypatch = auth_client
-    # 미인증 → 401.
-    assert (await client.get("/api/conversations")).status_code == 401
+    ac, monkeypatch, app = auth_client
+    assert (await ac.get("/api/conversations")).status_code == 401
+    await _login(
+        ac, app, monkeypatch,
+        {"provider": "github", "sub": "7", "email": "p@q.com", "name": "P"},
+    )
+    assert (await ac.get("/api/conversations")).status_code == 200
 
-    async def fake_oauth(request, provider):
-        return {"provider": "github", "sub": "7", "email": "p@q.com", "name": "P"}
 
-    monkeypatch.setattr(auth, "_complete_oauth", fake_oauth)
-    await client.get("/auth/callback/github")
+async def test_invalid_state_rejected(auth_client):
+    ac, monkeypatch, app = auth_client
 
-    # 인증 후 통과.
-    assert (await client.get("/api/conversations")).status_code == 200
+    async def fake_fetch(settings, prov, code):
+        return {"provider": "github", "sub": "5", "email": "x@y.com", "name": "X"}
+
+    monkeypatch.setattr(auth, "_fetch_profile", fake_fetch)
+    # state 미발급 → 거부(위조 방지).
+    r = await ac.get("/auth/callback/github?code=x&state=bogus")
+    assert r.status_code == 400
 
 
 async def test_kakao_no_email_fallback(auth_client):
-    client, monkeypatch = auth_client
-
-    async def fake_oauth(request, provider):
-        # 카카오 이메일 미동의.
-        return {"provider": "kakao", "sub": "999", "email": None, "name": "닉네임"}
-
-    monkeypatch.setattr(auth, "_complete_oauth", fake_oauth)
-    r = await client.get("/auth/callback/kakao")
+    ac, monkeypatch, app = auth_client
+    r = await _login(
+        ac, app, monkeypatch,
+        {"provider": "kakao", "sub": "999", "email": None, "name": "닉네임"},
+    )
     assert r.status_code == 302
-
-    me = (await client.get("/auth/me")).json()
+    me = (await ac.get("/auth/me")).json()
     assert me["user"]["email"] == "kakao:999"  # placeholder 폴백
     assert me["user"]["name"] == "닉네임"

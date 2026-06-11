@@ -50,3 +50,22 @@ async def get_session(store, token: str) -> dict | None:
 
 async def destroy_session(store, token: str) -> None:
     await store.delete(_PREFIX + token)
+
+
+# ── OAuth state (로그인 핸드셰이크 위조 방지값, 서버 보관) ──────
+_OAUTH_PREFIX = "oauthstate:"
+OAUTH_STATE_TTL = 600  # 10분
+
+
+async def stash_oauth_state(store, state: str, provider: str) -> None:
+    await store.setex(_OAUTH_PREFIX + state, OAUTH_STATE_TTL, provider)
+
+
+async def pop_oauth_state(store, state: str) -> str | None:
+    """state를 꺼내고 제거(1회용). 발급한 provider를 반환, 없으면 None."""
+    key = _OAUTH_PREFIX + state
+    raw = await store.get(key)
+    await store.delete(key)
+    if raw is None:
+        return None
+    return raw.decode() if isinstance(raw, bytes) else raw
