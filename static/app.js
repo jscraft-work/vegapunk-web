@@ -1,242 +1,547 @@
 "use strict";
-// vegapunk SPA — 빌드 없는 바닐라 JS. fetch + EventSource만 사용.
-// FE는 다시쓰기·검색·요약·병합매칭·인덱싱을 호출하지 않는다(서버 내부 처리).
 
-const $ = (sel, el = document) => el.querySelector(sel);
-const api = async (path, opts) => {
-  const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
-  return r.json();
+const md = window.markdownit({ html: false, linkify: true, breaks: true });
+
+// 위키링크 [[제목]] → <a class="wikilink" data-title="제목">. 존재 안하면 .broken
+let knownTitles = new Set();
+let currentPageTitle = null;
+const WIKILINK = /\[\[([^\]]+)\]\]/g;
+function renderMarkdown(text) {
+  // 마크다운 먼저 렌더(html:false 라 내용 속 HTML은 이스케이프됨) → 그 후 위키링크 주입
+  const html = md.render(text);
+  return html.replace(WIKILINK, (_, t) => {
+    const title = t.trim();
+    const broken = knownTitles.has(title) ? "" : " broken";
+    return `<a class="wikilink${broken}" data-title="${encodeURIComponent(title)}">${escapeHtml(title)}</a>`;
+  });
+}
+
+// ---- 페이지 목록/패널 ----
+const pageList = document.getElementById("page-list");
+const panel = document.getElementById("page-panel");
+const panelTitle = document.getElementById("panel-title");
+const panelBody = document.getElementById("panel-body");
+
+let activeTag = null;  // 지식 사이드바 태그 필터
+
+async function refreshTitles() {
+  const r = await fetch("/api/pages");
+  knownTitles = new Set((await r.json()).pages.map((p) => p.title));
+}
+
+async function loadPages(filter) {
+  let pages;
+  if (filter && filter.trim()) {
+    const r = await fetch(`/api/search?q=${encodeURIComponent(filter)}`);
+    pages = (await r.json()).results.map((x) => ({ title: x.title }));
+  } else {
+    const url = activeTag ? `/api/pages?tag=${encodeURIComponent(activeTag)}` : "/api/pages";
+    pages = (await (await fetch(url)).json()).pages;
+  }
+  pageList.innerHTML = "";
+  for (const p of pages) {
+    const li = document.createElement("li");
+    li.textContent = p.title;
+    li.onclick = () => openPage(p.title, "manage");
+    pageList.appendChild(li);
+  }
+}
+
+const tagBar = document.getElementById("tag-bar");
+async function loadTags() {
+  const tags = (await (await fetch("/api/tags")).json()).tags;
+  tagBar.innerHTML = "";
+  if (!tags.length) return;
+  const mk = (label, val) => {
+    const c = document.createElement("span");
+    c.className = "tag-chip" + ((activeTag === val) ? " active" : "");
+    c.textContent = label;
+    c.onclick = () => { activeTag = val; loadTags(); loadPages(); };
+    return c;
+  };
+  tagBar.appendChild(mk("전체", null));
+  for (const t of tags) tagBar.appendChild(mk(`${t.tag} ${t.count}`, t.tag));
+}
+
+let pageReturnTo = "chat";  // 페이지 닫으면 돌아갈 모드
+
+function showPane(which) {
+  document.getElementById("chat-pane").classList.toggle("hidden", which !== "chat");
+  document.getElementById("manage-pane").classList.toggle("hidden", which !== "manage");
+  panel.classList.toggle("hidden", which !== "page");
+}
+
+async function openPage(title, from) {
+  const r = await fetch(`/api/page/${encodeURIComponent(title)}`);
+  if (!r.ok) return;
+  const { page, titles } = await r.json();
+  knownTitles = new Set(titles);
+  currentPageTitle = page.title;
+  panelTitle.textContent = page.title;
+  document.getElementById("ptags-input").value = (page.tags || []).join(", ");
+  panelBody.innerHTML = renderMarkdown(page.body || "");
+  if (from) pageReturnTo = from;  // 명시 호출(사이드바/관리/출처)만 갱신, 위키링크 점프는 유지
+  showPane("page");
+  document.querySelector(".panel-scroll").scrollTop = 0;
+}
+
+document.getElementById("panel-back").onclick = () => showPane(pageReturnTo);
+
+// 페이지 태그 편집
+const ptagsInput = document.getElementById("ptags-input");
+document.getElementById("ptags-suggest").onclick = async () => {
+  if (!currentPageTitle) return;
+  const btn = document.getElementById("ptags-suggest");
+  const old = btn.textContent; btn.textContent = "제안 중…"; btn.disabled = true;
+  try {
+    const { tags } = await (await fetch(`/api/page/${encodeURIComponent(currentPageTitle)}/suggest-tags`, { method: "POST" })).json();
+    const cur = ptagsInput.value.split(",").map((s) => s.trim()).filter(Boolean);
+    ptagsInput.value = [...new Set([...cur, ...(tags || [])])].join(", ");
+  } catch { /* ignore */ }
+  btn.textContent = old; btn.disabled = false;
+};
+document.getElementById("ptags-save").onclick = async () => {
+  if (!currentPageTitle) return;
+  const tags = ptagsInput.value.split(",").map((s) => s.trim()).filter(Boolean);
+  await fetch(`/api/page/${encodeURIComponent(currentPageTitle)}/tags`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tags }),
+  });
+  loadTags(); loadPages();
+  const btn = document.getElementById("ptags-save"); const o = btn.textContent;
+  btn.textContent = "저장됨 ✓"; setTimeout(() => { btn.textContent = o; }, 1200);
 };
 
-// ── 순수 함수(단위 테스트 가능) ────────────────────────────────
-// 마크다운 렌더 + [[위키링크]]를 존재/미존재로 칠한다.
-function renderMarkdown(body, titles) {
-  const known = new Set(titles || []);
-  const withLinks = (body || "").replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, (_, t) => {
-    const cls = known.has(t.trim()) ? "wikilink" : "wikilink missing";
-    return `<a class="${cls}" href="#/note/${encodeURIComponent(t.trim())}">${t.trim()}</a>`;
-  });
-  return window.marked ? window.marked.parse(withLinks) : withLinks;
-}
-window.renderMarkdown = renderMarkdown;
-
-// ── 라우팅 ────────────────────────────────────────────────────
-function route() {
-  const hash = location.hash || "#/chat";
-  document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-  if (hash.startsWith("#/note/")) {
-    $(`.tab[data-tab="notes"]`).classList.add("active");
-    renderNote(decodeURIComponent(hash.slice("#/note/".length)));
-  } else if (hash.startsWith("#/notes")) {
-    $(`.tab[data-tab="notes"]`).classList.add("active");
-    renderNotesSpace();
-  } else {
-    $(`.tab[data-tab="chat"]`).classList.add("active");
-    renderChatSpace(hash.startsWith("#/chat/") ? +hash.slice("#/chat/".length) : 0);
+document.getElementById("panel-delete").onclick = async () => {
+  if (!currentPageTitle) return;
+  const title = currentPageTitle;
+  // 역참조 확인
+  const r = await fetch(`/api/backlinks/${encodeURIComponent(title)}`);
+  const { backlinks } = await r.json();
+  let msg = `"${title}" 페이지를 삭제할까요?`;
+  if (backlinks.length) {
+    msg += `\n\n⚠️ 이 ${backlinks.length}개 문서가 [[${title}]]로 참조 중입니다 (삭제 시 점선 링크로 남음):\n· ` + backlinks.join("\n· ");
   }
-}
+  if (!confirm(msg)) return;
+  await fetch(`/api/page/${encodeURIComponent(title)}`, { method: "DELETE" });
+  currentPageTitle = null;
+  await refreshTitles();
+  loadPages();
+  if (pageReturnTo === "manage") await openManage(); else showPane("chat");
+};
+document.getElementById("page-search").addEventListener("input", (e) => loadPages(e.target.value));
 
-// ── 채팅 ──────────────────────────────────────────────────────
-async function renderChatSpace(convId) {
-  const { conversations } = await api("/api/conversations");
-  $("#sidebar").innerHTML =
-    `<button onclick="location.hash='#/chat/0'">+ 새 대화</button>` +
-    conversations.map((c) =>
-      `<div class="conv-item" onclick="location.hash='#/chat/${c.id}'">${c.title || "(제목 없음)"}</div>`
-    ).join("");
-
-  $("#main").innerHTML =
-    `<div style="text-align:right">${convId ? `<button onclick="openDistill(${convId})">💾 지식으로 저장</button>` : ""}</div>
-     <div id="thread"></div>
-     <div class="composer">
-       <input id="q" placeholder="무엇이든 물어보세요" autofocus />
-       <button id="send">전송</button>
-     </div>`;
-
-  if (convId) {
-    const d = await api(`/api/conversations/${convId}`);
-    (d.messages || []).forEach((m) => appendMessage(m.role, m.content, m.sources));
+// 위키링크/패널 클릭 위임
+document.body.addEventListener("click", (e) => {
+  const a = e.target.closest("a.wikilink");
+  if (a) { openPage(decodeURIComponent(a.dataset.title)); return; }
+  const tc = e.target.closest(".page-tags .tag-chip");
+  if (tc) {  // 페이지 본문의 태그 클릭 → 지식 공간에서 그 태그로 필터
+    activeTag = decodeURIComponent(tc.dataset.tag);
+    setSpace("knowledge");
   }
-  const send = () => {
-    const q = $("#q").value.trim();
-    if (q) { startChat(q, convId); $("#q").value = ""; }
-  };
-  $("#send").onclick = send;
-  $("#q").onkeydown = (e) => { if (e.key === "Enter") send(); };
+});
+
+// ---- 채팅 (SSE) ----
+const messages = document.getElementById("messages");
+const form = document.getElementById("chat-form");
+const input = document.getElementById("chat-input");
+const sendBtn = document.getElementById("send-btn");
+
+function addMsg(cls, html) {
+  const div = document.createElement("div");
+  div.className = `msg ${cls}`;
+  div.innerHTML = html;
+  messages.appendChild(div);
+  messages.scrollTop = messages.scrollHeight;
+  return div;
 }
 
-function appendMessage(role, content, sources) {
-  const thread = $("#thread");
-  const wrap = document.createElement("div");
-  wrap.className = `msg ${role}`;
-  if (sources && sources.length) wrap.appendChild(sourcesEl(sources));
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.innerHTML = role === "assistant" ? renderMarkdown(content, []) : content;
-  wrap.appendChild(bubble);
-  thread.appendChild(wrap);
-  thread.scrollTop = thread.scrollHeight;
-  return bubble;
+function chipRow(items) {
+  if (!items.length) return "";
+  return `<div class="chips">${items.join("")}</div>`;
 }
 
-function sourcesEl(sources) {
-  const el = document.createElement("div");
-  el.className = "sources";
-  el.innerHTML = sources.map((s) =>
-    `<span class="chip" onclick="location.hash='#/note/${encodeURIComponent(s.title)}'">📄 ${s.title}</span>`
-  ).join("");
-  return el;
+function sourceChips(sources) {
+  return (sources || []).map(
+    (s) => `<span class="chip" data-title="${encodeURIComponent(s.title)}" onclick="openPage(decodeURIComponent(this.dataset.title), 'chat')">📎 ${s.title}</span>`
+  );
 }
 
-function startChat(q, convId) {
-  appendMessage("user", q, null);
-  const hint = appendMessage("assistant", "🔍 검색 중…", null);
-  let answer = "";
-  const es = new EventSource(`/api/chat?q=${encodeURIComponent(q)}&conv=${convId}`);
-  es.addEventListener("conversation", (e) => {
-    const d = JSON.parse(e.data);
-    if (!convId) { convId = d.id; history.replaceState(null, "", `#/chat/${d.id}`); }
+function renderBotInto(el, text, sources, prompt) {
+  const chips = sourceChips(sources);
+  if (prompt) chips.push(`<span class="chip debug-chip">🔍 컨텍스트</span>`);
+  el.innerHTML = `<div class="markdown-body">${renderMarkdown(text)}</div>${chipRow(chips)}`;
+  const dc = el.querySelector(".debug-chip");
+  if (dc) dc.onclick = () => openDebug(prompt);
+}
+
+function openDebug(prompt) {
+  document.getElementById("debug-pre").textContent = prompt || "(컨텍스트 없음)";
+  document.getElementById("debug-overlay").classList.remove("hidden");
+}
+document.getElementById("debug-close").onclick = () =>
+  document.getElementById("debug-overlay").classList.add("hidden");
+
+let currentConvId = null;
+let activeES = null;  // 현재 포그라운드 스트림. 대화 전환 시 null 로 백그라운드화.
+
+form.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const q = input.value.trim();
+  if (!q) return;
+  addMsg("user", escapeHtml(q));
+  input.value = "";
+  input.style.height = "auto";
+  sendBtn.disabled = true;
+
+  const bot = addMsg("bot", `<span class="thinking">생각 중…</span>`);
+  let sources = [];
+
+  const es = new EventSource(`/api/chat?q=${encodeURIComponent(q)}&conv=${currentConvId || 0}`);
+  activeES = es;
+  const fg = () => es === activeES;  // 이 스트림이 아직 화면에 떠 있나
+
+  es.addEventListener("conversation", (ev) => {
+    const id = JSON.parse(ev.data).id;
+    if (fg()) currentConvId = id;
+    loadConversations();  // 새 대화 즉시 사이드바에 표시
   });
-  es.addEventListener("sources", (e) => {
-    const s = JSON.parse(e.data);
-    if (s.length) hint.parentNode.insertBefore(sourcesEl(s), hint);
-    hint.textContent = "";
+  es.addEventListener("sources", (ev) => {
+    sources = JSON.parse(ev.data);
   });
-  es.addEventListener("answer", (e) => {
-    answer += JSON.parse(e.data).text;
-    hint.innerHTML = renderMarkdown(answer, []);
+  es.addEventListener("answer", (ev) => {
+    if (!fg()) return;  // 다른 대화로 이동했으면 화면 안 건드림(응답은 서버에 저장됨)
+    const d = JSON.parse(ev.data);
+    renderBotInto(bot, d.text, sources, d.prompt);
+    messages.scrollTop = messages.scrollHeight;
   });
-  es.addEventListener("done", () => es.close());
-  es.addEventListener("error", (e) => {
-    try { hint.textContent += "\n⚠️ " + JSON.parse(e.data).message; } catch { /* 연결 종료 */ }
+  es.addEventListener("suggest", () => {
+    if (!fg()) return;
+    bot.innerHTML += chipRow([`<span class="chip save" onclick="window.openDistill()">💾 지식으로 저장</span>`]);
+  });
+  es.addEventListener("error", (ev) => {
+    if (fg()) {
+      try { bot.innerHTML = `<div class="markdown-body">⚠️ ${JSON.parse(ev.data).message}</div>`; }
+      catch { bot.innerHTML = `<div class="markdown-body">⚠️ 연결 오류</div>`; }
+      sendBtn.disabled = false;
+    }
     es.close();
   });
-}
-
-// ── distill 모달 ──────────────────────────────────────────────
-async function openDistill(convId) {
-  const { candidates } = await api("/api/distill", {
-    method: "POST", body: JSON.stringify({ conv_id: convId }),
+  es.addEventListener("done", () => {
+    es.close();
+    if (fg()) sendBtn.disabled = false;
+    loadConversations();  // 제목/순서 갱신
   });
-  if (!candidates.length) return alert("저장할 지식이 없습니다.");
-  const cards = candidates.map((c, i) => candidateCard(c, i)).join("");
-  showModal(`<h2>지식으로 저장</h2>${cards}
-    <div style="margin-top:1rem"><button onclick="saveAllCandidates()">모두 저장</button></div>`);
-  window.__cands = candidates;
+});
+
+// ---- 대화 목록 ----
+const convList = document.getElementById("conv-list");
+
+async function loadConversations() {
+  const r = await fetch("/api/conversations");
+  const convs = (await r.json()).conversations;
+  convList.innerHTML = "";
+  for (const c of convs) {
+    const li = document.createElement("li");
+    if (c.id === currentConvId) li.classList.add("active");
+    li.innerHTML =
+      `<span class="conv-title">${escapeHtml(c.title || "새 대화")}</span>` +
+      `<span class="conv-actions">` +
+      `<button class="conv-retitle" title="제목 자동생성(✨)">✨</button>` +
+      `<button class="conv-del" title="삭제">🗑</button></span>`;
+    const titleEl = li.querySelector(".conv-title");
+    titleEl.onclick = () => openConversation(c.id);
+    titleEl.ondblclick = (e) => { e.stopPropagation(); renameConversation(c.id, titleEl); };
+    li.querySelector(".conv-retitle").onclick = (e) => { e.stopPropagation(); retitleConversation(c.id, titleEl); };
+    li.querySelector(".conv-del").onclick = (e) => { e.stopPropagation(); deleteConversation(c.id); };
+    convList.appendChild(li);
+  }
 }
 
-function candidateCard(c, i) {
-  const warn = c.merge_target
-    ? `<p class="muted">⚠ 기존 「${c.merge_target.title}」와 ${Math.round(c.merge_target.similarity * 100)}% 유사</p>
-       <label><input type="radio" name="m${i}" value="merge" checked> 기존 병합</label>
-       <label><input type="radio" name="m${i}" value="new"> 새 노트</label>
-       <label><input type="radio" name="m${i}" value="skip"> 버림</label>
-       <div id="diff${i}"></div>`
-    : `<label><input type="radio" name="m${i}" value="new" checked> 새 노트</label>
-       <label><input type="radio" name="m${i}" value="skip"> 버림</label>`;
-  return `<div class="candidate"><strong>${c.title}</strong>
-    <div>${(c.tags || []).map((t) => `<span class="tag">#${t}</span>`).join("")}</div>${warn}</div>`;
+function renameConversation(id, titleEl) {
+  const old = titleEl.textContent;
+  const input = document.createElement("input");
+  input.className = "conv-rename-input";
+  input.value = old;
+  titleEl.replaceWith(input);
+  input.focus(); input.select();
+  let done = false;
+  const save = async () => {
+    if (done) return; done = true;
+    const v = input.value.trim();
+    if (v && v !== old) {
+      await fetch(`/api/conversations/${id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: v }),
+      });
+    }
+    loadConversations();
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    else if (e.key === "Escape") { done = true; loadConversations(); }
+  };
+  input.onblur = save;
 }
 
-async function saveAllCandidates() {
-  for (let i = 0; i < window.__cands.length; i++) {
-    const c = window.__cands[i];
-    const choice = (document.querySelector(`input[name="m${i}"]:checked`) || {}).value;
-    if (!choice || choice === "skip") continue;
-    const merge_into = choice === "merge" && c.merge_target ? c.merge_target.note_id : null;
-    await api("/api/ingest", {
-      method: "POST",
-      body: JSON.stringify({ title: c.title, body: c.body, tags: c.tags, merge_into }),
+async function retitleConversation(id, titleEl) {
+  titleEl.textContent = "✨ 제목 생성 중…";
+  try { await fetch(`/api/conversations/${id}/retitle`, { method: "POST" }); } catch { /* ignore */ }
+  loadConversations();
+}
+
+async function openConversation(id) {
+  const r = await fetch(`/api/conversations/${id}`);
+  if (!r.ok) return;
+  const conv = await r.json();
+  activeES = null;          // 진행 중 스트림은 백그라운드로(서버엔 계속 저장)
+  sendBtn.disabled = false;
+  currentConvId = id;
+  messages.innerHTML = "";
+  for (const m of conv.messages) {
+    if (m.role === "user") addMsg("user", escapeHtml(m.content));
+    else renderBotInto(addMsg("bot", ""), m.content, m.sources, m.prompt);
+  }
+  showPane("chat");
+  loadConversations();
+}
+
+function newChat() {
+  activeES = null;
+  sendBtn.disabled = false;
+  currentConvId = null;
+  messages.innerHTML = "";
+  showPane("chat");
+  loadConversations();
+  input.focus();
+}
+
+async function deleteConversation(id) {
+  if (!confirm("이 대화를 삭제할까요?")) return;
+  await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+  if (id === currentConvId) newChat();
+  else loadConversations();
+}
+
+document.getElementById("new-chat").onclick = newChat;
+
+// ---- GNB (채팅 / 지식 공간 전환) ----
+const gnbItems = document.querySelectorAll(".gnb-item");
+const sideChats = document.getElementById("side-chats");
+const sidePages = document.getElementById("side-pages");
+
+function setSpace(space) {
+  gnbItems.forEach((b) => b.classList.toggle("active", b.dataset.space === space));
+  sideChats.classList.toggle("hidden", space !== "chat");
+  sidePages.classList.toggle("hidden", space !== "knowledge");
+  if (space === "chat") {
+    showPane("chat");
+  } else {
+    loadTags();
+    loadPages();
+    openManage();  // 지식 → 메인은 바로 관리 뷰
+  }
+}
+gnbItems.forEach((b) => (b.onclick = () => setSpace(b.dataset.space)));
+
+// ---- 모바일 사이드바 드로어 ----
+const closeSidebar = () => document.body.classList.remove("sidebar-open");
+document.getElementById("menu-toggle").onclick = () => document.body.classList.toggle("sidebar-open");
+document.getElementById("sidebar-backdrop").onclick = closeSidebar;
+document.getElementById("sidebar").addEventListener("click", (e) => {
+  if (e.target.closest("#conv-list li, #page-list li, #new-chat, .tag-chip")) closeSidebar();
+});
+
+// 입력창 자동 높이 + Enter 전송(Shift+Enter 줄바꿈)
+input.addEventListener("input", () => {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 160) + "px";
+});
+input.addEventListener("keydown", (e) => {
+  // e.isComposing: 한글 IME 조합 중이면 Enter는 조합 확정용 → 전송 안 함(끝글자 중복 방지)
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
+});
+
+// ---- 지식으로 저장 (LLM이 대화를 토픽별 페이지로 정리 → 검토 → 저장) ----
+const distillOverlay = document.getElementById("distill-overlay");
+const distillBodyEl = document.getElementById("distill-body");
+const distillHint = document.getElementById("distill-hint");
+const distillSave = document.getElementById("distill-save");
+
+async function openDistill() {
+  if (!currentConvId) { alert("저장할 대화가 없어요. 먼저 대화를 시작하세요."); return; }
+  distillOverlay.classList.remove("hidden");
+  distillBodyEl.innerHTML = `<div class="distill-empty">대화를 토픽별로 정리하는 중…</div>`;
+  distillHint.textContent = "";
+  distillSave.disabled = true;
+  let pages = [];
+  try {
+    const r = await fetch("/api/distill", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conv_id: currentConvId }),
+    });
+    pages = (await r.json()).candidates || [];
+  } catch { pages = []; }
+  if (!pages.length) {
+    distillBodyEl.innerHTML = `<div class="distill-empty">저장할 만한 내용을 못 찾았어요.</div>`;
+    return;
+  }
+  distillBodyEl.innerHTML = "";
+  for (const p of pages) {
+    const exists = knownTitles.has(p.title);
+    const div = document.createElement("div");
+    div.className = "distill-page";
+    div.innerHTML =
+      `<div class="distill-page-head"><input type="checkbox" checked>` +
+      `<input type="text" class="d-title">` +
+      (exists ? `<span class="exists">기존에 병합</span>` : ``) +
+      `</div><textarea class="d-body" rows="6"></textarea>` +
+      `<input type="text" class="d-tags" placeholder="태그 (쉼표로 구분)">`;
+    div.querySelector(".d-title").value = p.title;     // 속성 인젝션 회피 위해 property로
+    div.querySelector(".d-body").value = p.body;
+    div.querySelector(".d-tags").value = (p.tags || []).join(", ");
+    distillBodyEl.appendChild(div);
+  }
+  distillHint.textContent = `${pages.length}개 페이지 제안됨 — 수정·선택 후 저장`;
+  distillSave.disabled = false;
+}
+
+distillSave.onclick = async () => {
+  const rows = [...distillBodyEl.querySelectorAll(".distill-page")]
+    .filter((r) => r.querySelector("input[type=checkbox]").checked);
+  distillSave.disabled = true;
+  for (const r of rows) {
+    const title = r.querySelector(".d-title").value.trim();
+    const body = r.querySelector(".d-body").value;
+    const tags = r.querySelector(".d-tags").value.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!title) continue;
+    await fetch("/api/ingest", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body, tags, merge_into: null }),
     });
   }
-  closeModal(); location.hash = "#/notes";
+  distillOverlay.classList.add("hidden");
+  await refreshTitles();
+  loadTags();
+  loadPages();
+};
+
+document.getElementById("save-conv").onclick = openDistill;
+document.getElementById("distill-close").onclick = () => distillOverlay.classList.add("hidden");
+window.openDistill = openDistill;
+
+// ---- 관리 패널 ----
+const chatPane = document.getElementById("chat-pane");
+const managePane = document.getElementById("manage-pane");
+const mRows = document.getElementById("manage-rows");
+const mCount = document.getElementById("manage-count");
+const mFilter = document.getElementById("manage-filter");
+const mSort = document.getElementById("manage-sort");
+const mOrphan = document.getElementById("manage-orphan");
+const mDelete = document.getElementById("manage-delete");
+const mSel = document.getElementById("manage-sel");
+const mAll = document.getElementById("manage-all");
+let manageData = [];
+const selected = new Set();
+
+async function openManage() {
+  const r = await fetch("/api/manage");
+  manageData = (await r.json()).pages;
+  selected.clear();
+  mAll.checked = false;
+  renderManage();
+  showPane("manage");
 }
 
-// ── 지식 화면 ─────────────────────────────────────────────────
-async function renderNotesSpace() {
-  const [{ pages }, { tags }] = await Promise.all([api("/api/pages"), api("/api/tags")]);
-  $("#sidebar").innerHTML =
-    `<input id="note-search" placeholder="🔍 검색" />
-     <div class="tags">${tags.map((t) => `<span class="tag" onclick="filterTag('${t.tag}')">#${t.tag} ${t.count}</span>`).join("")}</div>
-     <div id="page-list">${pages.map(pageItem).join("")}</div>`;
-  $("#note-search").onkeydown = async (e) => {
-    if (e.key === "Enter") {
-      const { results } = await api(`/api/search?q=${encodeURIComponent(e.target.value)}`);
-      $("#page-list").innerHTML = results.map((r) =>
-        `<div class="conv-item" onclick="location.hash='#/note/${encodeURIComponent(r.title)}'">
-           ${r.title}<br><span class="muted">${r.snippet}</span></div>`).join("");
+function closeManage() {
+  showPane("chat");
+}
+
+function renderManage() {
+  const f = mFilter.value.trim().toLowerCase();
+  let rows = manageData.filter((p) => !f || p.title.toLowerCase().includes(f));
+  if (mOrphan.checked) rows = rows.filter((p) => p.orphan);
+  const sort = mSort.value;
+  rows.sort((a, b) => {
+    if (sort === "title") return a.title.localeCompare(b.title);
+    if (sort === "len") return b.len - a.len;
+    if (sort === "backlinks") return b.backlinks - a.backlinks;
+    return (b.updated || "").localeCompare(a.updated || "");
+  });
+  mCount.textContent = `(${rows.length})`;
+  mRows.innerHTML = "";
+  for (const p of rows) {
+    const tr = document.createElement("tr");
+    if (p.orphan) tr.className = "orphan";
+    const checked = selected.has(p.title) ? "checked" : "";
+    tr.innerHTML =
+      `<td><input type="checkbox" data-title="${encodeURIComponent(p.title)}" ${checked}></td>` +
+      `<td class="title-cell" data-title="${encodeURIComponent(p.title)}">${escapeHtml(p.title)}</td>` +
+      `<td>${p.updated || ""}</td><td class="num">${p.len}</td>` +
+      `<td class="num">${p.outlinks}</td><td class="num">${p.backlinks}</td>`;
+    mRows.appendChild(tr);
+  }
+  updateSelCount();
+}
+
+function updateSelCount() {
+  mSel.textContent = selected.size;
+  mDelete.disabled = selected.size === 0;
+}
+
+mRows.addEventListener("change", (e) => {
+  const cb = e.target.closest("input[type=checkbox]");
+  if (!cb) return;
+  const t = decodeURIComponent(cb.dataset.title);
+  if (cb.checked) selected.add(t); else selected.delete(t);
+  updateSelCount();
+});
+mRows.addEventListener("click", (e) => {
+  const cell = e.target.closest("td.title-cell");
+  if (cell) openPage(decodeURIComponent(cell.dataset.title), "manage");
+});
+mAll.addEventListener("change", () => {
+  mRows.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.checked = mAll.checked;
+    const t = decodeURIComponent(cb.dataset.title);
+    if (mAll.checked) selected.add(t); else selected.delete(t);
+  });
+  updateSelCount();
+});
+mFilter.addEventListener("input", renderManage);
+mSort.addEventListener("change", renderManage);
+mOrphan.addEventListener("change", renderManage);
+
+mDelete.onclick = async () => {
+  if (!selected.size) return;
+  if (!confirm(`선택한 ${selected.size}개 페이지를 삭제할까요?\n(이들을 참조하는 링크는 점선으로 남습니다)`)) return;
+  for (const t of selected) {
+    await fetch(`/api/page/${encodeURIComponent(t)}`, { method: "DELETE" });
+  }
+  selected.clear();
+  await refreshTitles();
+  loadPages();
+  await openManage();  // 목록 새로고침
+};
+
+function escapeHtml(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+function escapeAttr(s) { return s.replace(/'/g, "\\'").replace(/"/g, "&quot;"); }
+window.openPage = openPage;
+
+async function loadUser() {
+  try {
+    const { user } = await (await fetch("/auth/me")).json();
+    const el = document.getElementById("gnb-user");
+    if (user) {
+      el.innerHTML = `<span>${escapeHtml(user.name || user.email)}</span><a href="/auth/logout">로그아웃</a>`;
     }
-  };
-  $("#main").innerHTML = `<p class="muted">노트를 선택하세요.</p>`;
-}
-const pageItem = (p) =>
-  `<div class="conv-item" onclick="location.hash='#/note/${encodeURIComponent(p.title)}'">${p.title}</div>`;
-
-async function filterTag(tag) {
-  const { pages } = await api(`/api/pages?tag=${encodeURIComponent(tag)}`);
-  $("#page-list").innerHTML = pages.map(pageItem).join("");
+  } catch { /* 인증 비활성(로컬) 등 — 무시 */ }
 }
 
-async function renderNote(title) {
-  const d = await api(`/api/page/${encodeURIComponent(title)}`);
-  if (d.error) { $("#main").innerHTML = `<p>없는 노트입니다.</p>`; return; }
-  const p = d.page;
-  $("#main").innerHTML =
-    `<h1>${p.title}</h1>
-     <div>${p.tags.map((t) => `<span class="tag">#${t}</span>`).join("")}</div>
-     <article>${renderMarkdown(p.body, d.titles)}</article>
-     <div class="backlinks"><strong>백링크</strong>
-       ${d.backlinks.map((b) => `<div><a href="#/note/${encodeURIComponent(b)}">${b}</a></div>`).join("") || "<span class='muted'>없음</span>"}
-     </div>
-     <div style="margin-top:1rem">
-       <button onclick="suggestTags('${encodeURIComponent(title)}')">태그 제안</button>
-       <button onclick="openVersions('${encodeURIComponent(title)}')">🕘 이력</button>
-       <button onclick="deleteNote('${encodeURIComponent(title)}')">삭제</button>
-     </div>`;
-}
-
-async function suggestTags(t) {
-  const { tags } = await api(`/api/page/${t}/suggest-tags`, { method: "POST" });
-  alert("제안 태그: " + (tags || []).join(", "));
-}
-async function deleteNote(t) {
-  if (!confirm("삭제할까요?")) return;
-  await api(`/api/page/${t}`, { method: "DELETE" });
-  location.hash = "#/notes";
-}
-async function openVersions(t) {
-  const { versions } = await api(`/api/page/${t}/versions`);
-  showModal(`<h2>버전 이력</h2>` + versions.map((v) =>
-    `<div class="candidate">${v.created_at} · ${v.source}
-       <button onclick="restoreVersion('${t}',${v.id})">되돌리기</button></div>`).join(""));
-}
-async function restoreVersion(t, vid) {
-  await api(`/api/page/${t}/restore`, { method: "POST", body: JSON.stringify({ version_id: vid }) });
-  closeModal(); route();
-}
-
-// ── 모달/드로어 ───────────────────────────────────────────────
-function showModal(html) {
-  $("#modal-root").innerHTML =
-    `<div class="modal" onclick="if(event.target===this)closeModal()">
-       <div class="modal-card">${html}
-         <div style="margin-top:1rem"><button onclick="closeModal()">닫기</button></div>
-       </div></div>`;
-}
-function closeModal() { $("#modal-root").innerHTML = ""; }
-
-// ── 부트스트랩 ────────────────────────────────────────────────
-async function boot() {
-  const { user } = await api("/auth/me");
-  $("#user-box").innerHTML = user
-    ? `${user.name} · <a href="/auth/logout">로그아웃</a>`
-    : `<a href="/login">로그인</a>`;
-  $("#drawer-toggle").onclick = () => {
-    $("#sidebar").classList.toggle("open");
-    $("#scrim").hidden = !$("#sidebar").classList.contains("open");
-  };
-  $("#scrim").onclick = () => { $("#sidebar").classList.remove("open"); $("#scrim").hidden = true; };
-  window.addEventListener("hashchange", route);
-  route();
-}
-boot();
+refreshTitles();
+loadPages();
+loadConversations();
+loadUser();
+setSpace("chat");

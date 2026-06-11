@@ -119,7 +119,7 @@ async def _chat_stream(pool, llm, conv_id, q, *, new_conv, title):
         parts: list[str] = []
         async for delta in llm.stream(prompt, tier="default"):
             parts.append(delta)
-            yield _sse("answer", {"text": delta})
+            yield _sse("answer", {"text": delta, "prompt": prompt})  # prompt: 디버그 컨텍스트 뷰어용
 
         # 6. assistant + citations 저장(부분 답변도 저장됨).
         answer = "".join(parts)
@@ -189,7 +189,7 @@ async def get_conversation(request: Request, conv_id: int) -> dict:
         return {"error": "not found"}
     msgs = await fetch(
         pool,
-        "SELECT id, role, content FROM messages WHERE conv_id = %s ORDER BY id",
+        "SELECT id, role, content, sent_prompt FROM messages WHERE conv_id = %s ORDER BY id",
         (conv_id,),
     )
     # citations: message_id → [{note_id, title, score}].
@@ -215,6 +215,7 @@ async def get_conversation(request: Request, conv_id: int) -> dict:
                 "role": m["role"],
                 "content": m["content"],
                 "sources": by_msg.get(m["id"], []),
+                "prompt": m["sent_prompt"],  # 디버그 컨텍스트 뷰어용
             }
             for m in msgs
         ],

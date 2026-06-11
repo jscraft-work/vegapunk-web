@@ -84,6 +84,49 @@ async def search_notes(request: Request, q: str) -> dict:
     return {"results": results}
 
 
+# ── 관리 테이블 / 백링크 (옛 프론트 호환) ──────────────────────
+
+
+@router.get("/api/manage")
+async def manage_list(request: Request) -> dict:
+    """관리 뷰: 노트별 글자수·아웃링크·백링크·고아 여부."""
+    rows = await fetch(
+        request.app.state.pool,
+        "SELECT n.title, n.updated_at, length(n.body) AS len, "
+        "(SELECT count(*) FROM edges e WHERE e.src_note = n.id) AS outlinks, "
+        "(SELECT count(*) FROM edges e WHERE e.dst_note = n.id) AS backlinks "
+        "FROM notes n ORDER BY n.updated_at DESC",
+    )
+    return {
+        "pages": [
+            {
+                "title": r["title"],
+                "updated": r["updated_at"].isoformat(),
+                "len": r["len"],
+                "outlinks": r["outlinks"],
+                "backlinks": r["backlinks"],
+                "orphan": r["backlinks"] == 0,
+            }
+            for r in rows
+        ]
+    }
+
+
+@router.get("/api/backlinks/{title}")
+async def backlinks_of(request: Request, title: str) -> dict:
+    pool = request.app.state.pool
+    note = await fetchrow(pool, "SELECT id FROM notes WHERE title = %s", (title,))
+    if note is None:
+        return {"backlinks": []}
+    rows = await fetch(
+        pool,
+        "SELECT n.title FROM edges e JOIN notes n ON n.id = e.src_note "
+        "WHERE e.dst_note = %s",
+        (note["id"],),
+    )
+    return {"backlinks": [r["title"] for r in rows]}
+
+
 # ── 노트 상세 (위키링크/백링크) ────────────────────────────────
 
 
