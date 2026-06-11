@@ -5,7 +5,9 @@ FROM postgres:16
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential git ca-certificates postgresql-server-dev-16 \
+        libicu-dev \
  && rm -rf /var/lib/apt/lists/*
+# libicu-dev: PG16은 ICU 빌드라 pg_bigm 컴파일 시 <unicode/ucol.h>(ICU 헤더) 필요.
 
 # pgvector — 앱 의존성과 동일 계열 버전(0.8.x)로 맞춤.
 RUN git clone --depth 1 --branch v0.8.0 https://github.com/pgvector/pgvector.git /tmp/pgvector \
@@ -18,7 +20,7 @@ RUN git clone --depth 1 https://github.com/pgbigm/pg_bigm.git /tmp/pg_bigm \
  && rm -rf /tmp/pg_bigm
 
 # 빌드 도구 정리(런타임 이미지 슬림화).
-RUN apt-get purge -y build-essential git postgresql-server-dev-16 \
+RUN apt-get purge -y build-essential git postgresql-server-dev-16 libicu-dev \
  && apt-get autoremove -y
 
 # 확장 자체는 앱 마이그레이션(CREATE EXTENSION vector / pg_bigm)이 활성화한다.
