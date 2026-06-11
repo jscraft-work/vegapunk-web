@@ -65,8 +65,8 @@ jobs:
           cache-from: type=gha       # 모델 프리페치 레이어 재사용(빌드 가속)
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ github.repository_owner }}/vegapunk:latest
-            ghcr.io/${{ github.repository_owner }}/vegapunk:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/vegapunk-web:latest
+            ghcr.io/${{ github.repository_owner }}/vegapunk-web:${{ github.sha }}
 
   deploy:
     needs: build-and-push
@@ -83,7 +83,7 @@ jobs:
             -H "X-Hub-Signature-256: $ENV_SIG" \
             -d "$ENV_PAYLOAD"
 
-          DEPLOY_PAYLOAD='{"image":"ghcr.io/${{ github.repository_owner }}/vegapunk:${{ github.sha }}"}'
+          DEPLOY_PAYLOAD='{"target":"vegapunk","image":"ghcr.io/${{ github.repository_owner }}/vegapunk-web:${{ github.sha }}"}'
           DEPLOY_SIG=$(echo -n "$DEPLOY_PAYLOAD" | openssl dgst -sha256 -hmac "${{ secrets.WEBHOOK_SECRET }}" | awk '{print "sha256=" $2}')
           curl -sf -X POST "${{ secrets.DEPLOY_WEBHOOK_URL }}/webhook/deploy" \
             -H "Content-Type: application/json" \
