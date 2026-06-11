@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
@@ -12,6 +12,17 @@ from app.routes import auth, chat, distill, health, notes
 from app.session import COOKIE_NAME, MemoryStore, get_session
 
 _STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+def _asset_version() -> str:
+    """정적 자산 캐시버스팅용 버전(파일 mtime). 배포 시 mtime 바뀌면 ?v 갱신."""
+    try:
+        return str(int(max(
+            (_STATIC_DIR / f).stat().st_mtime
+            for f in ("app.js", "style.css", "index.html")
+        )))
+    except OSError:
+        return "1"
 
 
 @asynccontextmanager
@@ -63,7 +74,13 @@ def create_app() -> FastAPI:
         store = getattr(request.app.state, "session_store", None)
         if not token or store is None or await get_session(store, token) is None:
             return RedirectResponse(url="/login", status_code=302)
-        return FileResponse(_STATIC_DIR / "index.html")
+        # index.html은 no-cache, 참조 자산엔 ?v=버전 붙여 캐시버스팅.
+        html = (_STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        v = _asset_version()
+        html = html.replace("/static/style.css", f"/static/style.css?v={v}").replace(
+            "/static/app.js", f"/static/app.js?v={v}"
+        )
+        return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
 
     if _STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
