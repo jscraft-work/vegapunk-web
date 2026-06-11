@@ -77,6 +77,7 @@
         <button id="panel-back">←</button>
         <span id="panel-title"></span>
         <div class="panel-actions">
+          <button id="panel-versions" title="수정 이력">🕘</button>
           <button id="panel-delete" title="삭제">🗑</button>
         </div>
       </div>
@@ -127,6 +128,23 @@
           <input type="range" id="set-vecdist" min="0.05" max="0.40" step="0.01" />
           <p class="set-hint">작을수록 엄격해서 관련성 높은 노트만 참고합니다. 이 거리보다 먼 노트는 참고자료에서 제외돼요. (변경 즉시 반영)</p>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="version-overlay" class="hidden">
+    <div id="version-modal">
+      <div class="version-head">
+        <strong>🕘 수정 이력</strong>
+        <button id="version-close">✕</button>
+      </div>
+      <ul id="version-list"></ul>
+      <div id="version-preview" class="hidden">
+        <div class="vp-head">
+          <span id="vp-label"></span>
+          <button id="version-restore">이 버전으로 되돌리기</button>
+        </div>
+        <pre id="vp-body"></pre>
       </div>
     </div>
   </div>

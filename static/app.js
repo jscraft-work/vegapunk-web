@@ -204,6 +204,58 @@ setVecdist.addEventListener("change", async () => {  // 슬라이더 놓는 즉�
   });
 });
 
+// ---- 버전 이력 / 되돌리기 ----
+const versionOverlay = document.getElementById("version-overlay");
+const versionList = document.getElementById("version-list");
+const versionPreview = document.getElementById("version-preview");
+let viewingVersionId = null;
+
+function fmtTs(s) { return (s || "").replace("T", " ").slice(0, 16); }
+
+async function openVersions() {
+  if (!currentPageTitle) return;
+  versionPreview.classList.add("hidden");
+  versionList.innerHTML = `<li class="version-empty">불러오는 중…</li>`;
+  versionOverlay.classList.remove("hidden");
+  const { versions } = await (await fetch(`/api/page/${encodeURIComponent(currentPageTitle)}/versions`)).json();
+  if (!versions || !versions.length) {
+    versionList.innerHTML = `<li class="version-empty">수정 이력이 없어요.</li>`;
+    return;
+  }
+  versionList.innerHTML = "";
+  for (const v of versions) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="v-meta">${fmtTs(v.created_at)} · ${escapeHtml(v.source || "")}</span>` +
+      `<button class="v-view" data-id="${v.id}">미리보기</button>`;
+    versionList.appendChild(li);
+  }
+}
+
+document.getElementById("panel-versions").onclick = openVersions;
+document.getElementById("version-close").onclick = () => versionOverlay.classList.add("hidden");
+
+versionList.addEventListener("click", async (e) => {
+  const btn = e.target.closest(".v-view");
+  if (!btn) return;
+  viewingVersionId = +btn.dataset.id;
+  const { body } = await (await fetch(`/api/page/${encodeURIComponent(currentPageTitle)}/versions/${viewingVersionId}`)).json();
+  document.getElementById("vp-label").textContent = `버전 #${viewingVersionId} 미리보기`;
+  document.getElementById("vp-body").textContent = body || "";
+  versionPreview.classList.remove("hidden");
+});
+
+document.getElementById("version-restore").onclick = async () => {
+  if (!viewingVersionId || !currentPageTitle) return;
+  if (!confirm("이 버전으로 되돌릴까요?\n(현재 본문은 새 이력으로 백업됩니다)")) return;
+  await fetch(`/api/page/${encodeURIComponent(currentPageTitle)}/restore`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ version_id: viewingVersionId }),
+  });
+  versionOverlay.classList.add("hidden");
+  await openPage(currentPageTitle);   // 본문 갱신
+  await refreshTitles();
+};
+
 let currentConvId = null;
 let activeES = null;  // 현재 포그라운드 스트림. 대화 전환 시 null 로 백그라운드화.
 
