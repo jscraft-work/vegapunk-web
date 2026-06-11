@@ -13,6 +13,11 @@ RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
+# fastembed 모델(~2GB) 프리페치 — 소스와 무관(앱 import 대신 fastembed 직접 호출).
+# COPY app 앞에 둬서 앱 코드가 바뀌어도 이 레이어 캐시가 유지된다(uv.lock에만 의존).
+# 모델명/캐시경로는 app/embedding.py 와 일치해야 함.
+RUN uv run python -c "from fastembed import TextEmbedding; TextEmbedding('intfloat/multilingual-e5-large', cache_dir='/app/.fastembed_cache')"
+
 # 소스.
 COPY app ./app
 COPY migrations ./migrations
@@ -20,9 +25,6 @@ COPY static ./static
 
 # 소스 들어온 뒤 프로젝트(vegapunk) 설치.
 RUN uv sync --frozen --no-dev
-
-# fastembed 모델을 이미지에 미리 받아둔다(uv.lock 고정 버전으로 — 풀링 일관성).
-RUN uv run python -c "from app import embedding; embedding._get_model()"
 
 # 비루트 유저.
 RUN useradd --create-home appuser && chown -R appuser:appuser /app
