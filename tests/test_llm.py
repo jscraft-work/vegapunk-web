@@ -46,7 +46,7 @@ async def test_no_session_id():
     assert captured["url"] == "/ask"
     body = captured["body"]
     assert body["prompt"] == "안녕"
-    assert body["level"] == "normal"
+    assert body["level"] == "high"
     # 무상태 원칙: 대화상태 키가 절대 없어야 한다.
     for forbidden in ("session_id", "session", "conversation_id", "history"):
         assert forbidden not in body

@@ -50,8 +50,8 @@ class OpenclawClient(LLMClient):
         base_url: str,
         *,
         api_key: str = "",
-        model_low: str = "low",
-        model_default: str = "normal",
+        model_low: str = "normal",
+        model_default: str = "high",
         timeout: float = 60.0,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
