@@ -324,8 +324,18 @@ async function loadConversations() {
       `<button class="conv-retitle" title="제목 자동생성(✨)">✨</button>` +
       `<button class="conv-del" title="삭제">🗑</button></span>`;
     const titleEl = li.querySelector(".conv-title");
-    titleEl.onclick = () => openConversation(c.id);
-    titleEl.ondblclick = (e) => { e.stopPropagation(); renameConversation(c.id, titleEl); };
+    let clickTimer = null;
+    // 단일클릭=열기, 더블클릭=이름변경. 더블클릭이면 대기 중인 '열기'를 취소해
+    // openConversation의 목록 재렌더가 수정창을 날리지 않게 한다.
+    titleEl.onclick = () => {
+      if (clickTimer) return;
+      clickTimer = setTimeout(() => { clickTimer = null; openConversation(c.id); }, 220);
+    };
+    titleEl.ondblclick = (e) => {
+      e.stopPropagation();
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      renameConversation(c.id, titleEl);
+    };
     li.querySelector(".conv-retitle").onclick = (e) => { e.stopPropagation(); retitleConversation(c.id, titleEl); };
     li.querySelector(".conv-del").onclick = (e) => { e.stopPropagation(); deleteConversation(c.id); };
     convList.appendChild(li);
