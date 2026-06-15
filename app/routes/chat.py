@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -92,6 +93,18 @@ async def _save_citations(pool, message_id, hits: list[search.SearchHit]) -> Non
         await conn.commit()
 
 
+async def _generate_and_save(pool, llm, conv_id, prompt, hits) -> str:
+    """답변 생성 + assistant/citations 저장. asyncio.shield로 호출되어
+    클라이언트가 끊겨도(새로고침/이탈) 끝까지 완료된다 → 답이 유실되지 않음."""
+    parts: list[str] = []
+    async for delta in llm.stream(prompt, tier="default"):
+        parts.append(delta)
+    answer = "".join(parts)
+    msg_id = await _insert_message(pool, conv_id, "assistant", answer, sent_prompt=prompt)
+    await _save_citations(pool, msg_id, hits)
+    return answer
+
+
 async def _chat_stream(pool, llm, conv_id, q, *, new_conv, title):
     try:
         if new_conv:
@@ -114,21 +127,15 @@ async def _chat_stream(pool, llm, conv_id, q, *, new_conv, title):
         ctx = await memory.build_answer_context(pool, conv_id)
         prompt = _assemble_answer_prompt(ctx, hits, q)
 
-        # 5. user 저장 → 스트리밍.
+        # 5. user 저장 → 답변 생성+저장. shield로 감싸 클라이언트가 끊겨도
+        #    (새로고침/이탈) 생성·저장은 끝까지 완료 → 새로고침해도 답 유지.
         await _insert_message(pool, conv_id, "user", q)
-        parts: list[str] = []
-        async for delta in llm.stream(prompt, tier="default"):
-            parts.append(delta)
-            yield _sse("answer", {"text": delta, "prompt": prompt})  # prompt: 디버그 컨텍스트 뷰어용
-
-        # 6. assistant + citations 저장(부분 답변도 저장됨).
-        answer = "".join(parts)
-        msg_id = await _insert_message(
-            pool, conv_id, "assistant", answer, sent_prompt=prompt
+        answer = await asyncio.shield(
+            _generate_and_save(pool, llm, conv_id, prompt, hits)
         )
-        await _save_citations(pool, msg_id, hits)
 
-        # 7. done.
+        # 6. 스트리밍(openclaw 비스트리밍 → 한 덩이) + done.
+        yield _sse("answer", {"text": answer, "prompt": prompt})
         yield _sse("done", {})
     except Exception as exc:  # noqa: BLE001 — SSE error 이벤트로 전달
         yield _sse("error", {"message": str(exc)})
