@@ -147,32 +147,43 @@ const form = document.getElementById("chat-form");
 const input = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 
-// ---- 메모 패널 (데스크탑: Obsidian식 마크다운 에디터 EasyMDE + 답변 담기) ----
+// ---- 메모 패널 (데스크탑: Toast UI WYSIWYG 마크다운 에디터 + 답변 담기) ----
 const memoPanel = document.getElementById("memo-panel");
-const memoTextEl = document.getElementById("memo-text");
+const memoEl = document.getElementById("memo-editor");
 const MEMO_KEY = "vegapunk_memo";
-let memoEditor = null;
-const getMemo = () => (memoEditor ? memoEditor.value() : memoTextEl.value);
-const setMemo = (v) => { if (memoEditor) memoEditor.value(v); else memoTextEl.value = v; };
+const memoInit = localStorage.getItem(MEMO_KEY) || "";
+let memoEditor = null;   // Toast UI 인스턴스
+let memoFb = null;       // CDN 실패 시 폴백 textarea
+const getMemo = () => (memoEditor ? memoEditor.getMarkdown() : memoFb.value);
+const setMemo = (v) => { if (memoEditor) memoEditor.setMarkdown(v); else memoFb.value = v; };
 const saveMemo = () => localStorage.setItem(MEMO_KEY, getMemo());
 try {
-  // EasyMDE: 마크다운 소스 + 미리보기 토글 + 툴바.
-  memoEditor = new EasyMDE({
-    element: memoTextEl,
-    spellChecker: false,
-    status: false,
-    autosave: { enabled: false },
+  // WYSIWYG: 표기(`**`,`#`,```) 안 보이고 바로 렌더된 채로 편집.
+  memoEditor = new toastui.Editor({
+    el: memoEl,
+    height: "100%",
+    theme: "dark",
+    initialEditType: "wysiwyg",
+    previewStyle: "vertical",
+    usageStatistics: false,
+    initialValue: memoInit,
     placeholder: "자유 메모… (답변의 '📝 메모로' 버튼으로도 담을 수 있어요)",
-    toolbar: ["bold", "italic", "heading", "|", "quote", "unordered-list",
-              "ordered-list", "|", "link", "code", "table", "|",
-              "preview", "side-by-side", "|", "guide"],
+    toolbarItems: [
+      ["heading", "bold", "italic", "strike"],
+      ["hr", "quote"],
+      ["ul", "ol", "task"],
+      ["table", "link", "code", "codeblock"],
+    ],
   });
-  memoEditor.codemirror.on("change", saveMemo);
+  memoEditor.on("change", saveMemo);
 } catch (e) {
-  // CDN 실패 등 → 평문 textarea 폴백.
-  memoTextEl.addEventListener("input", saveMemo);
+  // CDN 실패 → 평문 textarea 폴백.
+  memoFb = document.createElement("textarea");
+  memoFb.id = "memo-text";
+  memoFb.value = memoInit;
+  memoFb.addEventListener("input", saveMemo);
+  memoEl.appendChild(memoFb);
 }
-setMemo(localStorage.getItem(MEMO_KEY) || "");
 document.getElementById("memo-clear").onclick = () => {
   if (!getMemo().trim() || confirm("메모를 비울까요?")) { setMemo(""); saveMemo(); }
 };
@@ -180,7 +191,6 @@ function appendToMemo(text) {
   const cur = getMemo().replace(/\s+$/, "");
   setMemo((cur ? cur + "\n\n---\n\n" : "") + text);
   saveMemo();
-  if (memoEditor) memoEditor.codemirror.scrollIntoView({ line: memoEditor.value().split("\n").length, ch: 0 });
 }
 
 // 채팅↔메모 너비 리사이즈(드래그). 저장된 너비 복원.

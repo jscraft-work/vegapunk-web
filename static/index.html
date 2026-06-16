@@ -4,10 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>vegapunk</title>
-  <link rel="stylesheet" href="https://unpkg.com/easymde/dist/easymde.min.css" />
+  <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css" />
+  <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/theme/toastui-editor-dark.min.css" />
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
-  <script src="https://unpkg.com/easymde/dist/easymde.min.js"></script>
+  <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
 </head>
 <body>
   <header id="gnb">
@@ -96,7 +97,7 @@
     <div id="memo-resizer" class="hidden"></div>
     <aside id="memo-panel" class="hidden">
       <div class="memo-head">📝 메모<button id="memo-clear" title="비우기">🗑</button></div>
-      <textarea id="memo-text" placeholder="자유 메모… (답변의 '📝 메모로' 버튼으로도 담을 수 있어요)"></textarea>
+      <div id="memo-editor"></div>
     </aside>
   </div>
 
