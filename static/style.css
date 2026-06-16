@@ -296,6 +296,19 @@ body {
 .vp-head #version-restore { background: var(--accent); color: #1a1b1e; border: none; border-radius: 8px; padding: 7px 14px; font-weight: 700; font-size: 13px; cursor: pointer; }
 #vp-body { flex: 1; overflow: auto; margin: 0; padding: 12px 18px; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg); }
 
+/* 메모 패널 (데스크탑 전용) */
+#memo-panel { width: 340px; flex-shrink: 0; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+#memo-panel.hidden { display: none; }
+.memo-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 600; }
+.memo-head button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; }
+.memo-head button:hover { color: #ff8a8a; }
+#memo-text { flex: 1; resize: none; border: none; background: var(--bg); color: var(--text); padding: 14px; font-size: 14px; line-height: 1.6; font-family: inherit; outline: none; }
+.chip.memo-chip { color: #b9f27a; border-color: #3d5230; }
+@media (max-width: 768px) {
+  #memo-panel { display: none !important; }
+  .memo-chip { display: none; }
+}
+
 /* distill 스마트 병합 */
 .d-merge { display: flex; gap: 14px; margin-bottom: 8px; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
 .d-merge label { display: flex; align-items: center; gap: 4px; cursor: pointer; }

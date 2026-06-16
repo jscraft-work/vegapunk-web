@@ -147,6 +147,23 @@ const form = document.getElementById("chat-form");
 const input = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 
+// ---- 메모 패널 (데스크탑: 자유 스크래치패드 + 답변 담기, 로컬 저장) ----
+const memoPanel = document.getElementById("memo-panel");
+const memoText = document.getElementById("memo-text");
+const MEMO_KEY = "vegapunk_memo";
+memoText.value = localStorage.getItem(MEMO_KEY) || "";
+const saveMemo = () => localStorage.setItem(MEMO_KEY, memoText.value);
+memoText.addEventListener("input", saveMemo);
+document.getElementById("memo-clear").onclick = () => {
+  if (!memoText.value.trim() || confirm("메모를 비울까요?")) { memoText.value = ""; saveMemo(); }
+};
+function appendToMemo(text) {
+  const cur = memoText.value.replace(/\s+$/, "");
+  memoText.value = (cur ? cur + "\n\n---\n\n" : "") + text;
+  saveMemo();
+  memoText.scrollTop = memoText.scrollHeight;
+}
+
 function addMsg(cls, html) {
   const div = document.createElement("div");
   div.className = `msg ${cls}`;
@@ -170,9 +187,12 @@ function sourceChips(sources) {
 function renderBotInto(el, text, sources, prompt) {
   const chips = sourceChips(sources);
   if (prompt) chips.push(`<span class="chip debug-chip">🔍 컨텍스트</span>`);
+  chips.push(`<span class="chip memo-chip">📝 메모로</span>`);
   el.innerHTML = `<div class="markdown-body">${renderMarkdown(text)}</div>${chipRow(chips)}`;
   const dc = el.querySelector(".debug-chip");
   if (dc) dc.onclick = () => openDebug(prompt);
+  const mc = el.querySelector(".memo-chip");
+  if (mc) mc.onclick = () => appendToMemo(text);
 }
 
 function openDebug(prompt) {
@@ -417,6 +437,7 @@ function setSpace(space) {
   gnbItems.forEach((b) => b.classList.toggle("active", b.dataset.space === space));
   sideChats.classList.toggle("hidden", space !== "chat");
   sidePages.classList.toggle("hidden", space !== "knowledge");
+  memoPanel.classList.toggle("hidden", space !== "chat");  // 메모는 채팅 공간에서만(모바일은 CSS로 숨김)
   if (space === "chat") {
     showPane("chat");
   } else {
