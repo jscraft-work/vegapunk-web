@@ -304,8 +304,14 @@ body {
 .memo-head button:hover { color: #ff8a8a; }
 #memo-text { flex: 1; resize: none; border: none; background: var(--bg); color: var(--text); padding: 14px; font-size: 14px; line-height: 1.6; font-family: inherit; outline: none; }
 .chip.memo-chip { color: #b9f27a; border-color: #3d5230; }
+/* 채팅↔메모 리사이저 */
+#memo-resizer { width: 6px; flex-shrink: 0; cursor: col-resize; background: transparent; }
+#memo-resizer:hover { background: var(--accent-dim); }
+#memo-resizer.hidden { display: none; }
+body.resizing-col { user-select: none; cursor: col-resize; }
 @media (max-width: 768px) {
   #memo-panel { display: none !important; }
+  #memo-resizer { display: none !important; }
   .memo-chip { display: none; }
 }
 

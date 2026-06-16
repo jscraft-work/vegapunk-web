@@ -164,6 +164,29 @@ function appendToMemo(text) {
   memoText.scrollTop = memoText.scrollHeight;
 }
 
+// 채팅↔메모 너비 리사이즈(드래그). 저장된 너비 복원.
+const memoResizer = document.getElementById("memo-resizer");
+const savedMemoW = localStorage.getItem("vegapunk_memo_w");
+if (savedMemoW) memoPanel.style.width = savedMemoW + "px";
+let memoResizing = false;
+memoResizer.addEventListener("mousedown", (e) => {
+  memoResizing = true;
+  document.body.classList.add("resizing-col");
+  e.preventDefault();
+});
+document.addEventListener("mousemove", (e) => {
+  if (!memoResizing) return;
+  const r = document.getElementById("app").getBoundingClientRect();
+  const w = Math.max(220, Math.min(r.right - e.clientX, r.width - 500));  // 메모 220~(앱-500)
+  memoPanel.style.width = w + "px";
+});
+document.addEventListener("mouseup", () => {
+  if (!memoResizing) return;
+  memoResizing = false;
+  document.body.classList.remove("resizing-col");
+  localStorage.setItem("vegapunk_memo_w", parseInt(memoPanel.style.width, 10));
+});
+
 function addMsg(cls, html) {
   const div = document.createElement("div");
   div.className = `msg ${cls}`;
@@ -438,6 +461,7 @@ function setSpace(space) {
   sideChats.classList.toggle("hidden", space !== "chat");
   sidePages.classList.toggle("hidden", space !== "knowledge");
   memoPanel.classList.toggle("hidden", space !== "chat");  // 메모는 채팅 공간에서만(모바일은 CSS로 숨김)
+  memoResizer.classList.toggle("hidden", space !== "chat");
   if (space === "chat") {
     showPane("chat");
   } else {
