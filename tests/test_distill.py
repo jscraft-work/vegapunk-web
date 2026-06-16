@@ -23,6 +23,11 @@ def test_lenient_json():
     # 잡담만 → 빈 배열.
     assert extract_json_array("그냥 인사네요. 저장할 거 없어요.") == []
     assert extract_json_array("빈 배열입니다 []") == []
+    # 회귀: 서두에 [[위키링크]]/[라벨]이 있어도 진짜 배열을 찾아야 한다(첫 '[' 오인 금지).
+    pre = '다음은 [[오이재배]] 관련 [기존 노트] 기반 노트입니다:\n[{"title":"오이","body":"한 포기에 [[지주]] 하나.","tags":["농사"]}]'
+    arr2 = extract_json_array(pre)
+    assert len(arr2) == 1 and arr2[0]["title"] == "오이"
+    assert "[[지주]]" in arr2[0]["body"]  # 본문 속 위키링크는 보존
 
 
 @pytest_asyncio.fixture

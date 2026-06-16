@@ -53,17 +53,27 @@ class OpenclawClient(LLMClient):
         model_low: str = "normal",
         model_default: str = "high",
         timeout: float = 60.0,
+        timeout_low: float | None = None,
+        timeout_default: float | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._models = {"low": model_low, "default": model_default}
-        self._timeout = timeout
+        # tier별 타임아웃: low(다시쓰기/제목)는 짧게 빨리 실패, default(답변)는 길게.
+        # 미지정 시 공통 timeout으로 폴백(하위호환).
+        self._timeouts = {
+            "low": timeout_low if timeout_low is not None else timeout,
+            "default": timeout_default if timeout_default is not None else timeout,
+        }
         # 테스트에서 httpx MockTransport를 주입해 요청 페이로드를 검증한다.
         self._transport = transport
 
-    def _http(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=self._timeout, transport=self._transport)
+    def _timeout_for(self, tier: str) -> float:
+        return self._timeouts.get(tier, self._timeouts["default"])
+
+    def _http(self, tier: str) -> httpx.AsyncClient:
+        return httpx.AsyncClient(timeout=self._timeout_for(tier), transport=self._transport)
 
     def _model_for(self, tier: str) -> str:
         # 알 수 없는 tier는 default로 안전하게 강등.
@@ -81,7 +91,7 @@ class OpenclawClient(LLMClient):
         return {
             "prompt": prompt,
             "level": self._model_for(tier),
-            "timeout_seconds": int(self._timeout),
+            "timeout_seconds": int(self._timeout_for(tier)),
         }
 
     async def _ask(self, prompt: str, tier: str) -> str:
@@ -90,7 +100,7 @@ class OpenclawClient(LLMClient):
         last_exc: Exception | None = None
         for _ in range(2):
             try:
-                async with self._http() as client:
+                async with self._http(tier) as client:
                     resp = await client.post(
                         f"{self._base_url}/ask",
                         json=payload,
@@ -173,5 +183,7 @@ def get_llm() -> LLMClient:
             api_key=s.OPENCLAW_API_KEY,
             model_low=s.OPENCLAW_MODEL_LOW,
             model_default=s.OPENCLAW_MODEL_DEFAULT,
+            timeout_low=s.OPENCLAW_TIMEOUT_LOW,
+            timeout_default=s.OPENCLAW_TIMEOUT_DEFAULT,
         )
     return _client

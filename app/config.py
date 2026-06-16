@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # normal=빠름(다시쓰기/제목), high=답변/요약(nanobot). 옛 prod=high.
     OPENCLAW_MODEL_LOW: str = "normal"
     OPENCLAW_MODEL_DEFAULT: str = "high"
+    # tier별 타임아웃(초). low=다시쓰기/제목(짧게), default=답변/요약(high 모델은 느려서 길게).
+    OPENCLAW_TIMEOUT_LOW: float = 30.0
+    OPENCLAW_TIMEOUT_DEFAULT: float = 180.0
 
     # ── 인증/세션 (Task 10) ─────────────────────────────────
     SECRET_KEY: str = "dev-secret-change-me"  # SessionMiddleware(authlib state)용
