@@ -93,8 +93,15 @@
 
     <div id="memo-resizer" class="hidden"></div>
     <aside id="memo-panel" class="hidden">
-      <div class="memo-head">📝 메모<button id="memo-clear" title="비우기">🗑</button></div>
-      <div id="memo-editor"></div>
+      <section class="memo-section">
+        <div class="memo-head">📝 글로벌 메모<button id="memo-clear-global" title="비우기">🗑</button></div>
+        <div id="memo-editor-global" class="memo-editor"></div>
+      </section>
+      <div id="memo-split"></div>
+      <section class="memo-section">
+        <div class="memo-head">💬 이 대화 메모<button id="memo-clear-conv" title="비우기">🗑</button></div>
+        <div id="memo-editor-conv" class="memo-editor"></div>
+      </section>
     </aside>
   </div>
 
@@ -157,11 +164,49 @@
 
   <script src="/static/app.js"></script>
   <script type="module">
-    // Milkdown WYSIWYG 메모 에디터 (노션식 입력 변환). @milkdown/kit = ProseMirror 자체번들 → 무빌드 CDN.
-    const MEMO_KEY = "vegapunk_memo";
-    const el = document.getElementById("memo-editor");
-    const initial = localStorage.getItem(MEMO_KEY) || "";
+    // Milkdown WYSIWYG 메모 에디터 2개 (노션식 입력 변환). @milkdown/kit = ProseMirror 자체번들 → 무빌드 CDN.
+    //  · 글로벌 메모: vegapunk_memo 키에 고정 저장.
+    //  · 대화별 메모: 저장 시 window.curConvMemoKey(앱이 대화 전환 때 갱신)를 읽어 그 키에 저장.
+    const GLOBAL_KEY = "vegapunk_memo";
     const V = "https://esm.sh/@milkdown/kit@7";
+
+    // 에디터 1개 생성 팩토리. onSave(md): 저장 콜백. 실패 시 textarea 폴백.
+    async function makeMemoEditor(mods, el, initial, onSave) {
+      const { core, cm, gfmM, listenerM, historyM, utils } = mods;
+      const { Editor, rootCtx, defaultValueCtx } = core;
+      const editor = await Editor.make()
+        .config((ctx) => {
+          ctx.set(rootCtx, el);
+          ctx.set(defaultValueCtx, initial);
+          ctx.get(listenerM.listenerCtx).markdownUpdated((_, md) => onSave(md));
+        })
+        .use(cm.commonmark)   // # ## - 1. > ** ` --- 입력 규칙 내장
+        .use(gfmM.gfm)        // 표·체크박스·취소선
+        .use(historyM.history)
+        .use(listenerM.listener)
+        .create();
+      return {
+        get: () => editor.action(utils.getMarkdown()),
+        set: (md) => editor.action(utils.replaceAll(md)),
+      };
+    }
+
+    function makeTextareaFallback(el, initial, placeholder, onSave) {
+      const ta = document.createElement("textarea");
+      ta.value = initial;
+      ta.placeholder = placeholder;
+      ta.addEventListener("input", () => onSave(ta.value));
+      el.appendChild(ta);
+      return { get: () => ta.value, set: (v) => { ta.value = v; onSave(v); } };
+    }
+
+    const gEl = document.getElementById("memo-editor-global");
+    const cEl = document.getElementById("memo-editor-conv");
+    const gInit = localStorage.getItem(GLOBAL_KEY) || "";
+    const cInit = localStorage.getItem(window.curConvMemoKey) || "";
+    const saveGlobal = (md) => localStorage.setItem(GLOBAL_KEY, md);
+    const saveConv = (md) => localStorage.setItem(window.curConvMemoKey, md);
+
     try {
       const [core, cm, gfmM, listenerM, historyM, utils] = await Promise.all([
         import(`${V}/core`),
@@ -171,31 +216,13 @@
         import(`${V}/plugin/history`),
         import(`${V}/utils`),
       ]);
-      const { Editor, rootCtx, defaultValueCtx } = core;
-      const editor = await Editor.make()
-        .config((ctx) => {
-          ctx.set(rootCtx, el);
-          ctx.set(defaultValueCtx, initial);
-          ctx.get(listenerM.listenerCtx).markdownUpdated((_, md) => localStorage.setItem(MEMO_KEY, md));
-        })
-        .use(cm.commonmark)   // # ## - 1. > ** ` --- 입력 규칙 내장
-        .use(gfmM.gfm)        // 표·체크박스·취소선
-        .use(historyM.history)
-        .use(listenerM.listener)
-        .create();
-      window.__memo = {
-        get: () => editor.action(utils.getMarkdown()),
-        set: (md) => editor.action(utils.replaceAll(md)),
-      };
+      const mods = { core, cm, gfmM, listenerM, historyM, utils };
+      window.__memo = await makeMemoEditor(mods, gEl, gInit, saveGlobal);
+      window.__convMemo = await makeMemoEditor(mods, cEl, cInit, saveConv);
     } catch (e) {
       console.error("Milkdown 로드 실패 → textarea 폴백:", e);
-      const ta = document.createElement("textarea");
-      ta.id = "memo-text";
-      ta.value = initial;
-      ta.placeholder = "자유 메모…";
-      ta.addEventListener("input", () => localStorage.setItem(MEMO_KEY, ta.value));
-      el.appendChild(ta);
-      window.__memo = { get: () => ta.value, set: (v) => { ta.value = v; localStorage.setItem(MEMO_KEY, v); } };
+      window.__memo = makeTextareaFallback(gEl, gInit, "자유 메모…", saveGlobal);
+      window.__convMemo = makeTextareaFallback(cEl, cInit, "이 대화에 대한 메모…", saveConv);
     }
   </script>
 </body>

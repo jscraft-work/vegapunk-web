@@ -56,7 +56,11 @@ def make_pool(dsn: str, *, open: bool = False) -> AsyncConnectionPool:
         conninfo=dsn,
         configure=_configure,
         open=open,
-        min_size=1,
+        # min_size를 키워 연결을 미리 예열한다. 풀이 1개만 유지하면, 화면을
+        # 클릭할 때 브라우저가 쏘는 동시 요청들이 새 연결을 한꺼번에 콜드
+        # 스타트하고(_configure의 register_vector 왕복까지) 꼬리지연이 2초까지
+        # 튄다. lifespan의 pool.wait()가 시작 시 min_size만큼 예열해 둔다.
+        min_size=4,
         max_size=10,
     )
 

@@ -29,8 +29,11 @@ _REWRITE_INSTRUCTION = (
     "독립적인 한 줄 검색어로 바꿔라. 검색어만 출력하라.\n\n"
 )
 _ANSWER_INSTRUCTION = (
-    "[지시]\n당신은 사용자의 개인 지식베이스를 근거로 답하는 비서다. "
-    "참고자료에 근거가 없으면 모른다고 솔직히 답하라."
+    "[지시]\n당신은 사용자를 돕는 비서다. [참고자료]가 주어지면 우선 근거로 "
+    "삼되, 없으면 그냥 네 지식으로 자연스럽게 답하라."
+)
+_TITLE_INSTRUCTION = (
+    "다음 첫 대화에 어울리는 짧은 제목(10자 내외)을 한 줄로만 출력하라.\n\n"
 )
 
 
@@ -59,11 +62,11 @@ def _assemble_answer_prompt(ctx: dict, hits: list[search.SearchHit], question: s
         parts.append(f"[요약]\n{ctx['summary']}")
     if ctx["recent_turns"]:
         parts.append(f"[최근 대화]\n{ctx['recent_turns']}")
+    # 노트가 잡혔을 때만 [참고자료]를 넣는다. 비었을 때 "(관련 노트 없음)"을
+    # 넣으면 모델이 매번 출처 부재를 해명하는 서두를 붙이므로 아예 생략한다.
     if hits:
         refs = "\n\n".join(f"- ({h.note_title}) {h.text}" for h in hits)
         parts.append(f"[참고자료]\n{refs}")
-    else:
-        parts.append("[참고자료]\n(관련 노트 없음)")
     parts.append(f"[질문]\n{question}")
     return "\n\n".join(parts)
 
@@ -134,8 +137,27 @@ async def _chat_stream(pool, llm, conv_id, q, *, new_conv, title):
             _generate_and_save(pool, llm, conv_id, prompt, hits)
         )
 
-        # 6. 스트리밍(openclaw 비스트리밍 → 한 덩이) + done.
+        # 6. 스트리밍(openclaw 비스트리밍 → 한 덩이).
         yield _sse("answer", {"text": answer, "prompt": prompt})
+
+        # 6.5 첫 턴이면 제목 자동 생성(ChatGPT/Claude식). 답변은 이미 위에서
+        #     발행됐으니 화면엔 곧바로 뜨고, 제목은 잠시 뒤 title 이벤트로 채워진다.
+        if new_conv:
+            try:
+                t = await llm.complete(
+                    _TITLE_INSTRUCTION + f"사용자: {q}\n비서: {answer}", tier="low"
+                )
+                t = t.strip().splitlines()[0].strip() if t.strip() else ""
+                if t:
+                    await execute(
+                        pool,
+                        "UPDATE conversations SET title = %s WHERE id = %s",
+                        (t, conv_id),
+                    )
+                    yield _sse("title", {"id": conv_id, "title": t})
+            except Exception:  # noqa: BLE001 — 제목 실패는 대화에 치명적이지 않음
+                pass
+
         yield _sse("done", {})
     except Exception as exc:  # noqa: BLE001 — SSE error 이벤트로 전달
         yield _sse("error", {"message": str(exc)})

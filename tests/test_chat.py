@@ -90,9 +90,11 @@ async def test_sse_event_order(chat_ctx):
 async def test_first_question_no_rewrite(chat_ctx):
     client, pool, llm, state, search_calls, _ = chat_ctx
     await client.get("/api/chat", params={"q": "원문질문", "conv": 0})
-    # 첫 질문 → 다시쓰기 complete 호출 0회, 검색은 원문으로.
-    assert state["complete_calls"] == 0
+    # 첫 질문 → 다시쓰기 생략의 결정적 증거: 검색이 원문 그대로 수행됨.
     assert search_calls == ["원문질문"]
+    # 다시쓰기 complete는 0회. 단, 첫 턴이면 제목 자동생성 complete가 1회(low) 발생.
+    assert state["complete_calls"] == 1
+    assert llm.last_tier == "low"
 
 
 async def test_followup_rewrite(chat_ctx):

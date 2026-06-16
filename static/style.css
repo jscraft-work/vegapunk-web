@@ -302,29 +302,36 @@ body {
 .memo-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 14px; font-weight: 600; }
 .memo-head button { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 14px; }
 .memo-head button:hover { color: #ff8a8a; }
-#memo-text { flex: 1; resize: none; border: none; background: var(--bg); color: var(--text); padding: 14px; font-size: 14px; line-height: 1.6; font-family: inherit; outline: none; }
+.memo-editor textarea { width: 100%; height: 100%; resize: none; border: none; background: var(--bg); color: var(--text); padding: 14px; font-size: 14px; line-height: 1.6; font-family: inherit; outline: none; box-sizing: border-box; }
 .chip.memo-chip { color: #b9f27a; border-color: #3d5230; }
 
+/* 메모 2단(글로벌 / 이 대화). memo-split 드래그로 위/아래 높이 조절. */
+.memo-section { display: flex; flex-direction: column; min-height: 60px; overflow: hidden; }
+.memo-section:first-of-type { flex: 0 0 50%; }   /* 글로벌: 초기 50%, 드래그로 조절 */
+.memo-section:last-of-type { flex: 1 1 0; }       /* 이 대화: 나머지 */
+#memo-split { height: 6px; flex-shrink: 0; cursor: row-resize; background: var(--border); }
+#memo-split:hover { background: var(--accent-dim); }
+
 /* Milkdown(메모 WYSIWYG) — 자체 테마 없이 다크 스타일 직접 */
-#memo-editor { flex: 1; min-height: 0; overflow-y: auto; }
-#memo-editor .milkdown { height: 100%; }
-#memo-editor .milkdown > .ProseMirror { min-height: 100%; box-sizing: border-box; padding: 14px 16px; outline: none; color: var(--text); font-size: 14px; line-height: 1.7; }
-#memo-editor .ProseMirror > * + * { margin-top: 10px; }
-#memo-editor .ProseMirror h1 { font-size: 1.5em; font-weight: 700; margin-top: 18px; }
-#memo-editor .ProseMirror h2 { font-size: 1.3em; font-weight: 700; margin-top: 16px; }
-#memo-editor .ProseMirror h3 { font-size: 1.12em; font-weight: 600; margin-top: 14px; }
-#memo-editor .ProseMirror ul, #memo-editor .ProseMirror ol { padding-left: 1.4em; }
-#memo-editor .ProseMirror li { margin: 2px 0; }
-#memo-editor .ProseMirror li > p { margin: 0; }
-#memo-editor .ProseMirror blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--muted); margin-left: 0; }
-#memo-editor .ProseMirror code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; font-size: .9em; font-family: ui-monospace, Menlo, monospace; }
-#memo-editor .ProseMirror pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
-#memo-editor .ProseMirror pre code { background: none; padding: 0; }
-#memo-editor .ProseMirror hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
-#memo-editor .ProseMirror a { color: var(--accent); }
-#memo-editor .ProseMirror table { border-collapse: collapse; }
-#memo-editor .ProseMirror th, #memo-editor .ProseMirror td { border: 1px solid var(--border); padding: 4px 8px; }
-#memo-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0.4em; }
+.memo-editor { flex: 1; min-height: 0; overflow-y: auto; }
+.memo-editor .milkdown { height: 100%; }
+.memo-editor .milkdown > .ProseMirror { min-height: 100%; box-sizing: border-box; padding: 14px 16px; outline: none; color: var(--text); font-size: 14px; line-height: 1.7; }
+.memo-editor .ProseMirror > * + * { margin-top: 10px; }
+.memo-editor .ProseMirror h1 { font-size: 1.5em; font-weight: 700; margin-top: 18px; }
+.memo-editor .ProseMirror h2 { font-size: 1.3em; font-weight: 700; margin-top: 16px; }
+.memo-editor .ProseMirror h3 { font-size: 1.12em; font-weight: 600; margin-top: 14px; }
+.memo-editor .ProseMirror ul, .memo-editor .ProseMirror ol { padding-left: 1.4em; }
+.memo-editor .ProseMirror li { margin: 2px 0; }
+.memo-editor .ProseMirror li > p { margin: 0; }
+.memo-editor .ProseMirror blockquote { border-left: 3px solid var(--border); padding-left: 12px; color: var(--muted); margin-left: 0; }
+.memo-editor .ProseMirror code { background: rgba(255,255,255,.08); padding: 1px 5px; border-radius: 4px; font-size: .9em; font-family: ui-monospace, Menlo, monospace; }
+.memo-editor .ProseMirror pre { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; overflow-x: auto; }
+.memo-editor .ProseMirror pre code { background: none; padding: 0; }
+.memo-editor .ProseMirror hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
+.memo-editor .ProseMirror a { color: var(--accent); }
+.memo-editor .ProseMirror table { border-collapse: collapse; }
+.memo-editor .ProseMirror th, .memo-editor .ProseMirror td { border: 1px solid var(--border); padding: 4px 8px; }
+.memo-editor .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0.4em; }
 /* 채팅↔메모 리사이저 */
 #memo-resizer { width: 6px; flex-shrink: 0; cursor: col-resize; background: transparent; }
 #memo-resizer:hover { background: var(--accent-dim); }

@@ -147,18 +147,45 @@ const form = document.getElementById("chat-form");
 const input = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 
-// ---- 메모 패널 (데스크탑: Milkdown WYSIWYG) ----
-// 에디터 인스턴스는 index.html 모듈 스크립트에서 생성해 window.__memo로 노출.
-// 저장(localStorage)은 모듈의 markdownUpdated 리스너가 처리.
+// ---- 메모 패널 (데스크탑: Milkdown WYSIWYG, 글로벌 + 대화별 2단) ----
+// 에디터 인스턴스 2개는 index.html 모듈에서 생성: window.__memo(글로벌),
+// window.__convMemo(이 대화). 글로벌은 vegapunk_memo 키에 그대로 저장.
+// 대화별은 vegapunk_memo_conv_<convId> 키 — 모듈은 저장 시 window.curConvMemoKey를
+// 참조하므로, 대화 전환 때 이 키만 바꿔주면 같은 에디터로 대화별 내용을 다룬다.
 const memoPanel = document.getElementById("memo-panel");
+const CONV_MEMO_PREFIX = "vegapunk_memo_conv_";
+const convMemoKey = (id) => CONV_MEMO_PREFIX + (id || "pending");
+window.curConvMemoKey = convMemoKey(null);  // 모듈의 저장 리스너가 읽는 현재 키
+
+// 대화 전환 시 이 대화 전용 메모를 에디터에 로드(서버 무관, localStorage).
+function loadConvMemo(id) {
+  if (!id) localStorage.removeItem(convMemoKey(null));  // 새 대화 = 빈 임시 슬롯
+  window.curConvMemoKey = convMemoKey(id);
+  if (window.__convMemo) window.__convMemo.set(localStorage.getItem(window.curConvMemoKey) || "");
+}
+// 첫 메시지 전 적어둔 임시(pending) 대화메모를 새로 생긴 대화 id로 승계.
+function adoptPendingConvMemo(id) {
+  const pending = localStorage.getItem(convMemoKey(null));
+  window.curConvMemoKey = convMemoKey(id);
+  if (pending) localStorage.setItem(window.curConvMemoKey, pending);
+  localStorage.removeItem(convMemoKey(null));  // 에디터 내용은 그대로, 키만 이동
+}
+
 const getMemo = () => (window.__memo ? window.__memo.get() : "");
 const setMemo = (v) => { if (window.__memo) window.__memo.set(v); };
-document.getElementById("memo-clear").onclick = () => {
-  if (!getMemo().trim() || confirm("메모를 비울까요?")) setMemo("");
+document.getElementById("memo-clear-global").onclick = () => {
+  if (!getMemo().trim() || confirm("글로벌 메모를 비울까요?")) setMemo("");
 };
+document.getElementById("memo-clear-conv").onclick = () => {
+  const m = window.__convMemo;
+  if (m && (!m.get().trim() || confirm("이 대화 메모를 비울까요?"))) m.set("");
+};
+// "📝 메모로": 답변은 그 대화의 산물이므로 대화 메모에 담는다(없으면 글로벌).
 function appendToMemo(text) {
-  const cur = getMemo().replace(/\s+$/, "");
-  setMemo((cur ? cur + "\n\n---\n\n" : "") + text);
+  const m = window.__convMemo || window.__memo;
+  if (!m) return;
+  const cur = m.get().replace(/\s+$/, "");
+  m.set((cur ? cur + "\n\n---\n\n" : "") + text);
 }
 
 // 채팅↔메모 너비 리사이즈(드래그). 저장된 너비 복원.
@@ -182,6 +209,30 @@ document.addEventListener("mouseup", () => {
   memoResizing = false;
   document.body.classList.remove("resizing-col");
   localStorage.setItem("vegapunk_memo_w", parseInt(memoPanel.style.width, 10));
+});
+
+// 글로벌/대화 메모 위·아래 높이 리사이즈(드래그). 글로벌 섹션 flex-basis 조절.
+const memoSplit = document.getElementById("memo-split");
+const globalSection = memoPanel.querySelector(".memo-section");
+const savedMemoH = localStorage.getItem("vegapunk_memo_h");
+if (savedMemoH) globalSection.style.flexBasis = savedMemoH + "px";
+let memoVResizing = false;
+memoSplit.addEventListener("mousedown", (e) => {
+  memoVResizing = true;
+  document.body.classList.add("resizing-col");
+  e.preventDefault();
+});
+document.addEventListener("mousemove", (e) => {
+  if (!memoVResizing) return;
+  const r = memoPanel.getBoundingClientRect();
+  const h = Math.max(60, Math.min(e.clientY - r.top, r.height - 120));  // 글로벌 60~(패널-120)
+  globalSection.style.flexBasis = h + "px";
+});
+document.addEventListener("mouseup", () => {
+  if (!memoVResizing) return;
+  memoVResizing = false;
+  document.body.classList.remove("resizing-col");
+  localStorage.setItem("vegapunk_memo_h", parseInt(globalSection.style.flexBasis, 10));
 });
 
 function addMsg(cls, html) {
@@ -317,8 +368,12 @@ form.addEventListener("submit", (e) => {
 
   es.addEventListener("conversation", (ev) => {
     const id = JSON.parse(ev.data).id;
-    if (fg()) currentConvId = id;
-    loadConversations();  // 새 대화 즉시 사이드바에 표시
+    if (fg()) {
+      currentConvId = id;
+      adoptPendingConvMemo(id);  // 첫 메시지 전 적어둔 임시 대화메모를 이 대화로 승계
+    }
+    addConvToSidebar(id, "");    // 새 대화 즉시 사이드바 맨 위에(로컬)
+    if (fg()) setActiveConv(id);
   });
   es.addEventListener("sources", (ev) => {
     sources = JSON.parse(ev.data);
@@ -333,6 +388,10 @@ form.addEventListener("submit", (e) => {
     if (!fg()) return;
     bot.innerHTML += chipRow([`<span class="chip save" onclick="window.openDistill()">💾 지식으로 저장</span>`]);
   });
+  es.addEventListener("title", (ev) => {
+    const d = JSON.parse(ev.data);
+    updateConvTitle(d.id, d.title);  // 첫 턴 자동 제목 — 사이드바 즉시 갱신
+  });
   es.addEventListener("error", (ev) => {
     if (fg()) {
       try { bot.innerHTML = `<div class="markdown-body">⚠️ ${JSON.parse(ev.data).message}</div>`; }
@@ -344,42 +403,70 @@ form.addEventListener("submit", (e) => {
   es.addEventListener("done", () => {
     es.close();
     if (fg()) sendBtn.disabled = false;
-    loadConversations();  // 제목/순서 갱신
+    // 제목은 title 이벤트로, 새 대화는 conversation 이벤트로 이미 반영됨 → 재요청 불필요.
   });
 });
 
 // ---- 대화 목록 ----
 const convList = document.getElementById("conv-list");
 
+// 대화 목록은 화면 최초 1회만 서버에서 받고(loadConversations), 이후 변화
+// (새 대화/제목/삭제/active)는 전부 로컬 DOM 조작으로 처리한다 → 불필요한
+// 왕복·전체 재렌더 제거. "그냥 다시 받고 싶을 때"는 새로고침이 안전장치.
+
+// 대화 한 건의 <li> 생성(+핸들러 와이어링). {id, title}만 있으면 됨.
+function renderConvLi(c) {
+  const li = document.createElement("li");
+  li.dataset.convId = c.id;
+  if (c.id === currentConvId) li.classList.add("active");
+  li.innerHTML =
+    `<span class="conv-title">${escapeHtml(c.title || "새 대화")}</span>` +
+    `<span class="conv-actions">` +
+    `<button class="conv-retitle" title="제목 자동생성(✨)">✨</button>` +
+    `<button class="conv-del" title="삭제">🗑</button></span>`;
+  const titleEl = li.querySelector(".conv-title");
+  let clickTimer = null;
+  // 단일클릭=열기, 더블클릭=이름변경. 더블클릭이면 대기 중인 '열기'를 취소.
+  titleEl.onclick = () => {
+    if (clickTimer) return;
+    clickTimer = setTimeout(() => { clickTimer = null; openConversation(c.id); }, 220);
+  };
+  titleEl.ondblclick = (e) => {
+    e.stopPropagation();
+    if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+    renameConversation(c.id, titleEl);
+  };
+  li.querySelector(".conv-retitle").onclick = (e) => { e.stopPropagation(); retitleConversation(c.id); };
+  li.querySelector(".conv-del").onclick = (e) => { e.stopPropagation(); deleteConversation(c.id); };
+  return li;
+}
+
+const convLi = (id) => convList.querySelector(`li[data-conv-id="${id}"]`);
+
+// 최초 1회: 서버에서 전체 목록 받아 렌더.
 async function loadConversations() {
   const r = await fetch("/api/conversations");
   const convs = (await r.json()).conversations;
   convList.innerHTML = "";
-  for (const c of convs) {
-    const li = document.createElement("li");
-    if (c.id === currentConvId) li.classList.add("active");
-    li.innerHTML =
-      `<span class="conv-title">${escapeHtml(c.title || "새 대화")}</span>` +
-      `<span class="conv-actions">` +
-      `<button class="conv-retitle" title="제목 자동생성(✨)">✨</button>` +
-      `<button class="conv-del" title="삭제">🗑</button></span>`;
-    const titleEl = li.querySelector(".conv-title");
-    let clickTimer = null;
-    // 단일클릭=열기, 더블클릭=이름변경. 더블클릭이면 대기 중인 '열기'를 취소해
-    // openConversation의 목록 재렌더가 수정창을 날리지 않게 한다.
-    titleEl.onclick = () => {
-      if (clickTimer) return;
-      clickTimer = setTimeout(() => { clickTimer = null; openConversation(c.id); }, 220);
-    };
-    titleEl.ondblclick = (e) => {
-      e.stopPropagation();
-      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
-      renameConversation(c.id, titleEl);
-    };
-    li.querySelector(".conv-retitle").onclick = (e) => { e.stopPropagation(); retitleConversation(c.id, titleEl); };
-    li.querySelector(".conv-del").onclick = (e) => { e.stopPropagation(); deleteConversation(c.id); };
-    convList.appendChild(li);
-  }
+  for (const c of convs) convList.appendChild(renderConvLi(c));
+}
+
+// 이하 로컬 조작 헬퍼 — 서버 재요청 없이 사이드바만 갱신.
+function addConvToSidebar(id, title) {
+  if (convLi(id)) return;            // 중복 방지
+  convList.prepend(renderConvLi({ id, title }));  // 새 대화는 맨 위
+}
+function updateConvTitle(id, title) {
+  const li = convLi(id);
+  if (li) li.replaceWith(renderConvLi({ id, title }));
+}
+function removeConvFromSidebar(id) {
+  const li = convLi(id);
+  if (li) li.remove();
+}
+function setActiveConv(id) {
+  convList.querySelectorAll("li").forEach((li) =>
+    li.classList.toggle("active", String(li.dataset.convId) === String(id)));
 }
 
 function renameConversation(id, titleEl) {
@@ -397,20 +484,25 @@ function renameConversation(id, titleEl) {
       await fetch(`/api/conversations/${id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: v }),
       });
+      updateConvTitle(id, v);
+    } else {
+      updateConvTitle(id, old);  // 변경 없음 → 원래 제목으로 li 복원
     }
-    loadConversations();
   };
   input.onkeydown = (e) => {
     if (e.key === "Enter") { e.preventDefault(); save(); }
-    else if (e.key === "Escape") { done = true; loadConversations(); }
+    else if (e.key === "Escape") { done = true; updateConvTitle(id, old); }
   };
   input.onblur = save;
 }
 
-async function retitleConversation(id, titleEl) {
-  titleEl.textContent = "✨ 제목 생성 중…";
-  try { await fetch(`/api/conversations/${id}/retitle`, { method: "POST" }); } catch { /* ignore */ }
-  loadConversations();
+async function retitleConversation(id) {
+  const li = convLi(id);
+  if (li) li.querySelector(".conv-title").textContent = "✨ 생성 중…";
+  try {
+    const { title } = await (await fetch(`/api/conversations/${id}/retitle`, { method: "POST" })).json();
+    updateConvTitle(id, title);
+  } catch { updateConvTitle(id, ""); }
 }
 
 async function openConversation(id) {
@@ -426,7 +518,8 @@ async function openConversation(id) {
     else renderBotInto(addMsg("bot", ""), m.content, m.sources, m.prompt);
   }
   showPane("chat");
-  loadConversations();
+  setActiveConv(id);     // 하이라이트만 이동(목록 재요청 없음)
+  loadConvMemo(id);      // 이 대화 전용 메모 로드
 }
 
 function newChat() {
@@ -435,15 +528,17 @@ function newChat() {
   currentConvId = null;
   messages.innerHTML = "";
   showPane("chat");
-  loadConversations();
+  setActiveConv(null);
+  loadConvMemo(null);    // 새 대화: 대화 메모는 빈 임시 슬롯
   input.focus();
 }
 
 async function deleteConversation(id) {
   if (!confirm("이 대화를 삭제할까요?")) return;
   await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+  localStorage.removeItem(convMemoKey(id));  // 대화 전용 메모도 정리
+  removeConvFromSidebar(id);
   if (id === currentConvId) newChat();
-  else loadConversations();
 }
 
 document.getElementById("new-chat").onclick = newChat;
