@@ -147,50 +147,18 @@ const form = document.getElementById("chat-form");
 const input = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 
-// ---- 메모 패널 (데스크탑: Toast UI WYSIWYG 마크다운 에디터 + 답변 담기) ----
+// ---- 메모 패널 (데스크탑: Milkdown WYSIWYG) ----
+// 에디터 인스턴스는 index.html 모듈 스크립트에서 생성해 window.__memo로 노출.
+// 저장(localStorage)은 모듈의 markdownUpdated 리스너가 처리.
 const memoPanel = document.getElementById("memo-panel");
-const memoEl = document.getElementById("memo-editor");
-const MEMO_KEY = "vegapunk_memo";
-const memoInit = localStorage.getItem(MEMO_KEY) || "";
-let memoEditor = null;   // Toast UI 인스턴스
-let memoFb = null;       // CDN 실패 시 폴백 textarea
-const getMemo = () => (memoEditor ? memoEditor.getMarkdown() : memoFb.value);
-const setMemo = (v) => { if (memoEditor) memoEditor.setMarkdown(v); else memoFb.value = v; };
-const saveMemo = () => localStorage.setItem(MEMO_KEY, getMemo());
-try {
-  // WYSIWYG: 표기(`**`,`#`,```) 안 보이고 바로 렌더된 채로 편집.
-  memoEditor = new toastui.Editor({
-    el: memoEl,
-    height: "100%",
-    theme: "dark",
-    initialEditType: "wysiwyg",
-    previewStyle: "vertical",
-    usageStatistics: false,
-    initialValue: memoInit,
-    placeholder: "자유 메모… (답변의 '📝 메모로' 버튼으로도 담을 수 있어요)",
-    toolbarItems: [
-      ["heading", "bold", "italic", "strike"],
-      ["hr", "quote"],
-      ["ul", "ol", "task"],
-      ["table", "link", "code", "codeblock"],
-    ],
-  });
-  memoEditor.on("change", saveMemo);
-} catch (e) {
-  // CDN 실패 → 평문 textarea 폴백.
-  memoFb = document.createElement("textarea");
-  memoFb.id = "memo-text";
-  memoFb.value = memoInit;
-  memoFb.addEventListener("input", saveMemo);
-  memoEl.appendChild(memoFb);
-}
+const getMemo = () => (window.__memo ? window.__memo.get() : "");
+const setMemo = (v) => { if (window.__memo) window.__memo.set(v); };
 document.getElementById("memo-clear").onclick = () => {
-  if (!getMemo().trim() || confirm("메모를 비울까요?")) { setMemo(""); saveMemo(); }
+  if (!getMemo().trim() || confirm("메모를 비울까요?")) setMemo("");
 };
 function appendToMemo(text) {
   const cur = getMemo().replace(/\s+$/, "");
   setMemo((cur ? cur + "\n\n---\n\n" : "") + text);
-  saveMemo();
 }
 
 // 채팅↔메모 너비 리사이즈(드래그). 저장된 너비 복원.

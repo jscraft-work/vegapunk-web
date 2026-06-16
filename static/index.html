@@ -4,11 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>vegapunk</title>
-  <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/toastui-editor.min.css" />
-  <link rel="stylesheet" href="https://uicdn.toast.com/editor/latest/theme/toastui-editor-dark.min.css" />
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
-  <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
 </head>
 <body>
   <header id="gnb">
@@ -159,5 +156,47 @@
   </div>
 
   <script src="/static/app.js"></script>
+  <script type="module">
+    // Milkdown WYSIWYG 메모 에디터 (노션식 입력 변환). @milkdown/kit = ProseMirror 자체번들 → 무빌드 CDN.
+    const MEMO_KEY = "vegapunk_memo";
+    const el = document.getElementById("memo-editor");
+    const initial = localStorage.getItem(MEMO_KEY) || "";
+    const V = "https://esm.sh/@milkdown/kit@7";
+    try {
+      const [core, cm, gfmM, listenerM, historyM, utils] = await Promise.all([
+        import(`${V}/core`),
+        import(`${V}/preset/commonmark`),
+        import(`${V}/preset/gfm`),
+        import(`${V}/plugin/listener`),
+        import(`${V}/plugin/history`),
+        import(`${V}/utils`),
+      ]);
+      const { Editor, rootCtx, defaultValueCtx } = core;
+      const editor = await Editor.make()
+        .config((ctx) => {
+          ctx.set(rootCtx, el);
+          ctx.set(defaultValueCtx, initial);
+          ctx.get(listenerM.listenerCtx).markdownUpdated((_, md) => localStorage.setItem(MEMO_KEY, md));
+        })
+        .use(cm.commonmark)   // # ## - 1. > ** ` --- 입력 규칙 내장
+        .use(gfmM.gfm)        // 표·체크박스·취소선
+        .use(historyM.history)
+        .use(listenerM.listener)
+        .create();
+      window.__memo = {
+        get: () => editor.action(utils.getMarkdown()),
+        set: (md) => editor.action(utils.replaceAll(md)),
+      };
+    } catch (e) {
+      console.error("Milkdown 로드 실패 → textarea 폴백:", e);
+      const ta = document.createElement("textarea");
+      ta.id = "memo-text";
+      ta.value = initial;
+      ta.placeholder = "자유 메모…";
+      ta.addEventListener("input", () => localStorage.setItem(MEMO_KEY, ta.value));
+      el.appendChild(ta);
+      window.__memo = { get: () => ta.value, set: (v) => { ta.value = v; localStorage.setItem(MEMO_KEY, v); } };
+    }
+  </script>
 </body>
 </html>
