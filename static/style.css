@@ -304,6 +304,25 @@ body {
 .memo-head button:hover { color: #ff8a8a; }
 #memo-text { flex: 1; resize: none; border: none; background: var(--bg); color: var(--text); padding: 14px; font-size: 14px; line-height: 1.6; font-family: inherit; outline: none; }
 .chip.memo-chip { color: #b9f27a; border-color: #3d5230; }
+
+/* EasyMDE(메모 에디터) 다크테마 + 패널 채우기 */
+#memo-panel .EasyMDEContainer { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+#memo-panel .EasyMDEContainer .CodeMirror { flex: 1; min-height: 0; height: auto; background: var(--bg); color: var(--text); border: none; padding: 4px 2px; }
+#memo-panel .editor-toolbar { background: var(--panel); border: none; border-bottom: 1px solid var(--border); opacity: 1; }
+#memo-panel .editor-toolbar button { color: var(--muted) !important; border: none; }
+#memo-panel .editor-toolbar button:hover,
+#memo-panel .editor-toolbar button.active { background: var(--accent-dim); color: var(--text) !important; }
+#memo-panel .editor-toolbar i.separator { border-left: 1px solid var(--border); border-right: none; }
+#memo-panel .CodeMirror-cursor { border-left-color: var(--text); }
+#memo-panel .CodeMirror-selected { background: var(--accent-dim) !important; }
+#memo-panel .cm-s-easymde .cm-header { color: var(--accent); }
+#memo-panel .cm-s-easymde .cm-link,
+#memo-panel .cm-s-easymde .cm-url { color: var(--accent); }
+#memo-panel .cm-s-easymde .cm-quote { color: var(--muted); }
+#memo-panel .cm-s-easymde .cm-comment { background: rgba(255,255,255,.05); border-radius: 3px; }
+#memo-panel .editor-preview, #memo-panel .editor-preview-side { background: var(--bg); color: var(--text); }
+#memo-panel .editor-preview-side { border-color: var(--border); }
+#memo-panel .editor-statusbar { color: var(--muted); }
 /* 채팅↔메모 리사이저 */
 #memo-resizer { width: 6px; flex-shrink: 0; cursor: col-resize; background: transparent; }
 #memo-resizer:hover { background: var(--accent-dim); }

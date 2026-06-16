@@ -147,21 +147,40 @@ const form = document.getElementById("chat-form");
 const input = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 
-// ---- 메모 패널 (데스크탑: 자유 스크래치패드 + 답변 담기, 로컬 저장) ----
+// ---- 메모 패널 (데스크탑: Obsidian식 마크다운 에디터 EasyMDE + 답변 담기) ----
 const memoPanel = document.getElementById("memo-panel");
-const memoText = document.getElementById("memo-text");
+const memoTextEl = document.getElementById("memo-text");
 const MEMO_KEY = "vegapunk_memo";
-memoText.value = localStorage.getItem(MEMO_KEY) || "";
-const saveMemo = () => localStorage.setItem(MEMO_KEY, memoText.value);
-memoText.addEventListener("input", saveMemo);
+let memoEditor = null;
+const getMemo = () => (memoEditor ? memoEditor.value() : memoTextEl.value);
+const setMemo = (v) => { if (memoEditor) memoEditor.value(v); else memoTextEl.value = v; };
+const saveMemo = () => localStorage.setItem(MEMO_KEY, getMemo());
+try {
+  // EasyMDE: 마크다운 소스 + 미리보기 토글 + 툴바.
+  memoEditor = new EasyMDE({
+    element: memoTextEl,
+    spellChecker: false,
+    status: false,
+    autosave: { enabled: false },
+    placeholder: "자유 메모… (답변의 '📝 메모로' 버튼으로도 담을 수 있어요)",
+    toolbar: ["bold", "italic", "heading", "|", "quote", "unordered-list",
+              "ordered-list", "|", "link", "code", "table", "|",
+              "preview", "side-by-side", "|", "guide"],
+  });
+  memoEditor.codemirror.on("change", saveMemo);
+} catch (e) {
+  // CDN 실패 등 → 평문 textarea 폴백.
+  memoTextEl.addEventListener("input", saveMemo);
+}
+setMemo(localStorage.getItem(MEMO_KEY) || "");
 document.getElementById("memo-clear").onclick = () => {
-  if (!memoText.value.trim() || confirm("메모를 비울까요?")) { memoText.value = ""; saveMemo(); }
+  if (!getMemo().trim() || confirm("메모를 비울까요?")) { setMemo(""); saveMemo(); }
 };
 function appendToMemo(text) {
-  const cur = memoText.value.replace(/\s+$/, "");
-  memoText.value = (cur ? cur + "\n\n---\n\n" : "") + text;
+  const cur = getMemo().replace(/\s+$/, "");
+  setMemo((cur ? cur + "\n\n---\n\n" : "") + text);
   saveMemo();
-  memoText.scrollTop = memoText.scrollHeight;
+  if (memoEditor) memoEditor.codemirror.scrollIntoView({ line: memoEditor.value().split("\n").length, ch: 0 });
 }
 
 // 채팅↔메모 너비 리사이즈(드래그). 저장된 너비 복원.
