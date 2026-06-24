@@ -572,14 +572,15 @@ document.getElementById("sidebar").addEventListener("click", (e) => {
   if (e.target.closest("#conv-list li, #page-list li, #new-chat, .tag-chip")) closeSidebar();
 });
 
-// 입력창 자동 높이 + Enter 전송(Shift+Enter 줄바꿈)
+// 입력창 자동 높이 + 데스크탑 Enter 전송(모바일 Enter는 개행)
+const mobileChatInput = window.matchMedia("(max-width: 768px), (hover: none) and (pointer: coarse)");
 input.addEventListener("input", () => {
   input.style.height = "auto";
   input.style.height = Math.min(input.scrollHeight, 160) + "px";
 });
 input.addEventListener("keydown", (e) => {
   // e.isComposing: 한글 IME 조합 중이면 Enter는 조합 확정용 → 전송 안 함(끝글자 중복 방지)
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
+  if (e.key === "Enter" && !mobileChatInput.matches && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault();
     form.requestSubmit();
   }
