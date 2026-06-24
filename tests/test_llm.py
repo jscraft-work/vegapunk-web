@@ -5,7 +5,48 @@ import json
 import httpx
 import pytest
 
-from app.llm import FakeLLMClient, LLMError, OpenclawClient
+from app.llm import (
+    FakeLLMClient,
+    LLMError,
+    OpenclawClient,
+    extract_openclaw_text,
+)
+
+
+def test_extract_plain_text():
+    assert extract_openclaw_text({"text": "ok"}) == "ok"
+    assert extract_openclaw_text({"text": "여러 줄\n본문"}) == "여러 줄\n본문"
+
+
+def test_extract_envelope_top_level():
+    # 에이전트 실행 봉투가 top-level로 올 때 result.payloads[*].text 회수.
+    env = {
+        "runId": "abc",
+        "status": "ok",
+        "summary": "completed",
+        "result": {"payloads": [{"text": "일상, 키즈노트, 육아앱", "mediaUrl": None}]},
+        "meta": {"durationMs": 2444},
+    }
+    assert extract_openclaw_text(env) == "일상, 키즈노트, 육아앱"
+
+
+async def test_complete_unwraps_envelope():
+    # 회귀: openclaw가 봉투를 text 필드에 문자열로 담아 반환해도 본문만 추출.
+    env = {
+        "runId": "abc", "status": "ok", "summary": "completed",
+        "result": {"payloads": [{"text": "제목 후보"}]},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"text": json.dumps(env, ensure_ascii=False)})
+
+    client = OpenclawClient("http://openclaw.test", transport=httpx.MockTransport(handler))
+    assert await client.complete("제목 뽑아줘", tier="low") == "제목 후보"
+
+
+def test_extract_multiple_payloads_joined():
+    env = {"result": {"payloads": [{"text": "첫째"}, {"text": "둘째"}]}}
+    assert extract_openclaw_text(env) == "첫째\n둘째"
 
 
 async def test_complete():
