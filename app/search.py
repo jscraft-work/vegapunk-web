@@ -37,19 +37,20 @@ class SearchHit:
     score: float
 
 
-async def _vector_search(conn, query: str, k: int) -> list[tuple[int, int, float]]:
-    """의미검색: 코사인 거리(작을수록 유사). (chunk_id, note_id, dist)."""
+async def _vector_search(conn, query: str, k: int, user_id: int) -> list[tuple[int, int, float]]:
+    """의미검색: 코사인 거리(작을수록 유사). (chunk_id, note_id, dist). 유저 노트로 한정."""
     qvec = Vector(await embedding.aembed_query(query))
     cur = await conn.execute(
-        "SELECT id, note_id, embedding <=> %s AS dist "
-        "FROM chunks WHERE embedding IS NOT NULL "
+        "SELECT c.id, c.note_id, c.embedding <=> %s AS dist "
+        "FROM chunks c JOIN notes n ON n.id = c.note_id "
+        "WHERE c.embedding IS NOT NULL AND n.user_id = %s "
         "ORDER BY dist LIMIT %s",
-        (qvec, k),
+        (qvec, user_id, k),
     )
     return [(r[0], r[1], r[2]) for r in await cur.fetchall()]
 
 
-async def _bigm_search(conn, query: str, k: int) -> list[tuple[int, int, float]]:
+async def _bigm_search(conn, query: str, k: int, user_id: int) -> list[tuple[int, int, float]]:
     """글자검색: pg_bigm 2-gram 유사도. (chunk_id, note_id, score).
 
     ``LIKE likequery(:q)``가 GIN(idx_chunks_bigm)을 탄다. 원문 query 사용
@@ -59,12 +60,13 @@ async def _bigm_search(conn, query: str, k: int) -> list[tuple[int, int, float]]
     # bigm_similarity 임계는 부분일치가 빌 때의 2-gram 유사도 폴백.
     # (=% 연산자 대신 함수형을 써서 % 이스케이프/스키마 모호성을 피한다.)
     cur = await conn.execute(
-        "SELECT id, note_id, bigm_similarity(text, %(q)s) AS score "
-        "FROM chunks "
-        "WHERE text LIKE likequery(%(q)s) "
-        "OR bigm_similarity(text, %(q)s) >= %(thr)s "
+        "SELECT c.id, c.note_id, bigm_similarity(c.text, %(q)s) AS score "
+        "FROM chunks c JOIN notes n ON n.id = c.note_id "
+        "WHERE n.user_id = %(uid)s AND ("
+        "  c.text LIKE likequery(%(q)s) "
+        "  OR bigm_similarity(c.text, %(q)s) >= %(thr)s) "
         "ORDER BY score DESC LIMIT %(k)s",
-        {"q": query, "k": k, "thr": BIGM_SIMILARITY_LIMIT},
+        {"q": query, "k": k, "thr": BIGM_SIMILARITY_LIMIT, "uid": user_id},
     )
     return [(r[0], r[1], r[2]) for r in await cur.fetchall()]
 
@@ -120,10 +122,10 @@ async def _graph_expand(
     return added
 
 
-async def search(conn, query: str) -> list[SearchHit]:
-    """하이브리드 검색 진입점. 상위 ``TOP_K`` SearchHit 반환(매칭 0건이면 [])."""
-    vec = await _vector_search(conn, query, PER_LIST_K)
-    big = await _bigm_search(conn, query, PER_LIST_K)
+async def search(conn, query: str, user_id: int) -> list[SearchHit]:
+    """하이브리드 검색 진입점. 상위 ``TOP_K`` SearchHit 반환(매칭 0건이면 []). 유저 노트로 한정."""
+    vec = await _vector_search(conn, query, PER_LIST_K, user_id)
+    big = await _bigm_search(conn, query, PER_LIST_K, user_id)
     if not vec and not big:
         return []
 

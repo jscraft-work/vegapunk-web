@@ -1,4 +1,4 @@
-from app.db import run_migrations
+from app.db import MIGRATIONS_DIR, run_migrations
 
 EXPECTED_TABLES = {
     "notes",
@@ -11,6 +11,7 @@ EXPECTED_TABLES = {
     "messages",
     "message_citations",
     "users",
+    "user_memo",
 }
 
 
@@ -23,7 +24,7 @@ async def test_migrations_idempotent(migrated_pool):
         cur = await conn.execute("SELECT count(*) FROM schema_migrations")
         (count,) = await cur.fetchone()
     # 적용 기록은 마이그레이션 파일 수와 일치(중복 없음)
-    assert count == 1
+    assert count == len(list(MIGRATIONS_DIR.glob("*.sql")))
 
 
 async def test_all_tables_exist(migrated_pool):

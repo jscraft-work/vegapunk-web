@@ -23,7 +23,7 @@ async def seeded_kb(clean_db):
     for title, body in _NOTES.items():
         row = await fetchrow(
             pool,
-            "INSERT INTO notes (title, body) VALUES (%s, %s) RETURNING id",
+            "INSERT INTO notes (user_id, title, body) VALUES (1, %s, %s) RETURNING id",
             (title, body),
         )
         ids[title] = row["id"]
@@ -36,7 +36,7 @@ async def test_vector(seeded_kb):
     pool, ids = seeded_kb
     # 글자가 안 겹치는 의미 유사 질의("강아지 키우기" vs 본문 "개/고양이").
     async with pool.connection() as conn:
-        hits = await search._vector_search(conn, "강아지를 집에서 키우는 법", search.PER_LIST_K)
+        hits = await search._vector_search(conn, "강아지를 집에서 키우는 법", search.PER_LIST_K, 1)
     assert hits, "벡터 검색 결과가 있어야 함"
     top_note = hits[0][1]
     assert top_note == ids["반려동물"]
@@ -45,7 +45,7 @@ async def test_vector(seeded_kb):
 async def test_bigm(seeded_kb):
     pool, ids = seeded_kb
     async with pool.connection() as conn:
-        hits = await search._bigm_search(conn, "연봉", search.PER_LIST_K)
+        hits = await search._bigm_search(conn, "연봉", search.PER_LIST_K, 1)
     note_ids = {nid for _, nid, _ in hits}
     assert ids["연봉협상"] in note_ids
 
@@ -65,7 +65,7 @@ async def test_relevance_gate(seeded_kb):
     """
     pool, ids = seeded_kb
     async with pool.connection() as conn:
-        hits = await search.search(conn, "면접과 자기소개서 준비")
+        hits = await search.search(conn, "면접과 자기소개서 준비", 1)
     note_ids = {h.note_id for h in hits}
     assert ids["취업준비"] in note_ids   # 직접 관련(글자·의미) → 포함
     assert ids["우주"] not in note_ids    # 무관 → 게이트로 제외
@@ -87,7 +87,7 @@ async def test_graph_expand_query_runs(seeded_kb):
 async def test_topk(seeded_kb):
     pool, _ = seeded_kb
     async with pool.connection() as conn:
-        hits = await search.search(conn, "연봉 협상과 이직")
+        hits = await search.search(conn, "연봉 협상과 이직", 1)
     assert len(hits) <= search.TOP_K
     assert all(h.note_title for h in hits)
 
@@ -96,5 +96,5 @@ async def test_empty(clean_db):
     # 인덱싱된 청크가 전혀 없으면(근거 없음) 빈 리스트.
     pool = clean_db
     async with pool.connection() as conn:
-        hits = await search.search(conn, "아무 질의나")
+        hits = await search.search(conn, "아무 질의나", 1)
     assert hits == []

@@ -51,7 +51,7 @@ async def test_merge_preview(distill_client):
     client, pool, llm = distill_client
     note = await fetchrow(
         pool,
-        "INSERT INTO notes (title, body) VALUES (%s,%s) RETURNING id",
+        "INSERT INTO notes (user_id, title, body) VALUES (1, %s,%s) RETURNING id",
         ("연봉협상", "기존 본문: 연봉 5천."),
     )
     r = await client.post(
@@ -71,12 +71,13 @@ async def test_ingest_versions(clean_db):
     # 기존 노트.
     note = await fetchrow(
         pool,
-        "INSERT INTO notes (title, body) VALUES (%s,%s) RETURNING id",
+        "INSERT INTO notes (user_id, title, body) VALUES (1, %s,%s) RETURNING id",
         ("연봉협상", "이전 본문."),
     )
     # 병합 저장.
     result = await ingest_note(
         pool,
+        user_id=1,
         title="연봉협상",
         body="통합된 새 본문.",
         tags=["커리어"],
@@ -94,10 +95,10 @@ async def test_ingest_reindex(clean_db):
     pool = clean_db
     # 저장(동기 인덱싱) 후 검색에 즉시 반영.
     await ingest_note(
-        pool, title="비건연구", body="비건은 인공지능 연구를 한다.", tags=[]
+        pool, user_id=1, title="비건연구", body="비건은 인공지능 연구를 한다.", tags=[]
     )
     from app import search
 
     async with pool.connection() as conn:
-        hits = await search.search(conn, "비건 인공지능 연구")
+        hits = await search.search(conn, "비건 인공지능 연구", 1)
     assert any(h.note_title == "비건연구" for h in hits)

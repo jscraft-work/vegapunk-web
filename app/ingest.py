@@ -40,7 +40,8 @@ async def _set_tags(conn, note_id: int, tags: list[str]) -> list[str]:
 
 
 async def _write_note(
-    pool, *, title: str, body: str, tags: list[str], merge_into: int | None, source: str
+    pool, *, user_id: int, title: str, body: str, tags: list[str],
+    merge_into: int | None, source: str
 ) -> tuple[int, str, str, bool]:
     """DB 쓰기(단일 트랜잭션). (note_id, title, action, is_new) 반환."""
     async with pool.connection() as conn:
@@ -49,7 +50,8 @@ async def _write_note(
                 # 병합: 대상 노트 본문 교체(이전 본문 백업). 정체성은 대상 노트.
                 old = await (
                     await conn.execute(
-                        "SELECT title, body FROM notes WHERE id = %s", (merge_into,)
+                        "SELECT title, body FROM notes WHERE id = %s AND user_id = %s",
+                        (merge_into, user_id),
                     )
                 ).fetchone()
                 if old is None:
@@ -64,17 +66,19 @@ async def _write_note(
                 await _set_tags(conn, merge_into, tags)
                 return merge_into, old[0], "merged", False
 
-            # merge_into 없음 → 제목 기준 신규/수정.
+            # merge_into 없음 → (유저, 제목) 기준 신규/수정.
             existing = await (
                 await conn.execute(
-                    "SELECT id, body FROM notes WHERE title = %s", (title,)
+                    "SELECT id, body FROM notes WHERE user_id = %s AND title = %s",
+                    (user_id, title),
                 )
             ).fetchone()
             if existing is None:
                 row = await (
                     await conn.execute(
-                        "INSERT INTO notes (title, body) VALUES (%s, %s) RETURNING id",
-                        (title, body),
+                        "INSERT INTO notes (user_id, title, body) VALUES (%s, %s, %s) "
+                        "RETURNING id",
+                        (user_id, title, body),
                     )
                 ).fetchone()
                 note_id, action, is_new = row[0], "created", True
@@ -95,6 +99,7 @@ async def _write_note(
 async def ingest_note(
     pool,
     *,
+    user_id: int,
     title: str,
     body: str,
     tags: list[str] | None = None,
@@ -105,6 +110,7 @@ async def ingest_note(
     """노트 저장 + 인덱싱. `background_tasks` 주어지면 비동기 인덱싱."""
     note_id, final_title, action, is_new = await _write_note(
         pool,
+        user_id=user_id,
         title=title,
         body=body,
         tags=tags or [],

@@ -18,6 +18,7 @@ from app.main import create_app
 _DATA_TABLES = [
     "message_citations",
     "messages",
+    "user_memo",
     "conversations",
     "note_tags",
     "tags",
@@ -52,13 +53,17 @@ async def migrated_pool():
 
 @pytest_asyncio.fixture
 async def clean_db(migrated_pool):
-    yield migrated_pool
+    # 셋업에서 TRUNCATE RESTART IDENTITY → 직후 첫 INSERT이므로 user.id=1 보장
+    # (테스트 순서·앞선 user 생성과 무관). FAKE_USER(id=1)와 맞춰 FK 충족.
     async with migrated_pool.connection() as conn:
         await conn.execute(
-            "TRUNCATE %s RESTART IDENTITY CASCADE"
-            % ", ".join(_DATA_TABLES)
+            "TRUNCATE %s RESTART IDENTITY CASCADE" % ", ".join(_DATA_TABLES)
+        )
+        await conn.execute(
+            "INSERT INTO users (email, name) VALUES ('tester@example.com', '테스터')"
         )
         await conn.commit()
+    yield migrated_pool
 
 
 @pytest_asyncio.fixture
