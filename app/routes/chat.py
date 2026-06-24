@@ -21,6 +21,7 @@ from app import memory, search
 from app.db import execute, fetch, fetchrow
 from app.deps import require_user
 from app.llm import LLMClient, get_llm
+from app.llm_text import clean_title
 
 router = APIRouter()
 
@@ -36,46 +37,6 @@ _ANSWER_INSTRUCTION = (
 _TITLE_INSTRUCTION = (
     "다음 첫 대화에 어울리는 짧은 제목(10자 내외)을 한 줄로만 출력하라.\n\n"
 )
-
-
-def _clean_title(raw: str) -> str:
-    """LLM 제목 응답을 안전한 한 줄 제목으로 정리.
-
-    low-tier 모델이 가끔 지시를 어기고 제목을 JSON(`{"title": "..."}`)이나
-    코드펜스로 감싸 반환한다. 그 원문이 그대로 제목에 저장되던 버그를 막는다.
-    """
-    t = (raw or "").strip()
-    if not t:
-        return ""
-    # 코드펜스(```json ... ```) 제거 후 본문만 남긴다.
-    if t.startswith("```"):
-        lines = [ln for ln in t.splitlines() if not ln.strip().startswith("```")]
-        t = "\n".join(lines).strip()
-    # JSON 객체/배열이면 파싱해 사람이 읽을 값 추출.
-    if t[:1] in "{[":
-        try:
-            obj = json.loads(t)
-        except ValueError:
-            obj = None
-        if isinstance(obj, dict):
-            for key in ("title", "제목", "text", "summary"):
-                v = obj.get(key)
-                if isinstance(v, str) and v.strip():
-                    t = v.strip()
-                    break
-            else:
-                # 키를 못 찾으면 첫 문자열 값이라도 사용.
-                t = next(
-                    (v.strip() for v in obj.values() if isinstance(v, str) and v.strip()),
-                    "",
-                )
-        elif isinstance(obj, list) and obj and isinstance(obj[0], str):
-            t = obj[0].strip()
-    # 첫 줄만, 감싼 따옴표 제거.
-    t = t.splitlines()[0].strip() if t.strip() else ""
-    if len(t) >= 2 and t[0] == t[-1] and t[0] in "\"'`":
-        t = t[1:-1].strip()
-    return t
 
 
 def _sse(event: str, payload) -> dict:
@@ -188,7 +149,7 @@ async def _chat_stream(pool, llm, conv_id, q, *, new_conv, title, user_id):
                 t = await llm.complete(
                     _TITLE_INSTRUCTION + f"사용자: {q}\n비서: {answer}", tier="low"
                 )
-                t = _clean_title(t)
+                t = clean_title(t)
                 if t:
                     await execute(
                         pool,
@@ -342,7 +303,7 @@ async def retitle_conversation(
     prompt = (
         "다음 대화에 어울리는 짧은 제목(10자 내외)을 한 줄로만 출력하라.\n\n" + convo
     )
-    title = _clean_title(await llm.complete(prompt, tier="low"))
+    title = clean_title(await llm.complete(prompt, tier="low"))
     if title:
         await execute(
             pool,

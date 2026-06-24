@@ -14,6 +14,7 @@ from app.db import fetch, fetchrow
 from app.deps import require_user
 from app.ingest import ingest_note
 from app.llm import LLMClient, get_llm
+from app.llm_text import parse_tag_list
 
 router = APIRouter()
 
@@ -270,8 +271,8 @@ async def suggest_tags(
         f"제목: {title}\n본문:\n{note['body']}"
     )
     raw = await llm.complete(prompt, tier="low")
-    tags = [t.strip() for t in raw.replace("\n", ",").split(",") if t.strip()]
-    return {"tags": tags}
+    # low-tier가 JSON({"tags":[..]})/코드펜스로 감싸 반환해도 안전하게 추출.
+    return {"tags": parse_tag_list(raw)}
 
 
 @router.delete("/api/page/{title}")
