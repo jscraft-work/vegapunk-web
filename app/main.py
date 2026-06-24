@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import ensure_extensions, make_pool, run_migrations
 from app.deps import require_user
-from app.routes import auth, chat, distill, health, notes
+from app.routes import auth, chat, distill, health, memo, notes
 from app.session import COOKIE_NAME, MemoryStore, get_session
 from app import settings as app_settings
 
@@ -65,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, dependencies=protected)
     app.include_router(distill.router, dependencies=protected)
     app.include_router(notes.router, dependencies=protected)
+    app.include_router(memo.router, dependencies=protected)
 
     @app.get("/login")
     async def login_page():

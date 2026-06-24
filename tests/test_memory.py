@@ -10,7 +10,7 @@ from app.llm import FakeLLMClient
 
 async def _new_conv(pool) -> int:
     row = await fetchrow(
-        pool, "INSERT INTO conversations DEFAULT VALUES RETURNING id", None
+        pool, "INSERT INTO conversations (user_id) VALUES (1) RETURNING id", None
     )
     return row["id"]
 

@@ -238,28 +238,82 @@ const input = document.getElementById("chat-input");
 const sendBtn = document.getElementById("send-btn");
 
 // ---- 메모 패널 (데스크탑: Milkdown WYSIWYG, 글로벌 + 대화별 2단) ----
-// 에디터 인스턴스 2개는 index.html 모듈에서 생성: window.__memo(글로벌),
-// window.__convMemo(이 대화). 글로벌은 vegapunk_memo 키에 그대로 저장.
-// 대화별은 vegapunk_memo_conv_<convId> 키 — 모듈은 저장 시 window.curConvMemoKey를
-// 참조하므로, 대화 전환 때 이 키만 바꿔주면 같은 에디터로 대화별 내용을 다룬다.
+// 에디터 인스턴스 2개는 index.html 모듈에서 생성: window.__memo(글로벌, 사용자별),
+// window.__convMemo(이 대화). 저장은 **서버**(글로벌=/api/memo, 대화별=
+// /api/conversations/{id}/memo)에 디바운스 PUT. 모듈의 onSave 콜백이 아래
+// window.__saveGlobalMemo / window.__saveConvMemo 로 위임한다.
 const memoPanel = document.getElementById("memo-panel");
-const CONV_MEMO_PREFIX = "vegapunk_memo_conv_";
-const convMemoKey = (id) => CONV_MEMO_PREFIX + (id || "pending");
-window.curConvMemoKey = convMemoKey(null);  // 모듈의 저장 리스너가 읽는 현재 키
 
-// 대화 전환 시 이 대화 전용 메모를 에디터에 로드(서버 무관, localStorage).
-function loadConvMemo(id) {
-  if (!id) localStorage.removeItem(convMemoKey(null));  // 새 대화 = 빈 임시 슬롯
-  window.curConvMemoKey = convMemoKey(id);
-  if (window.__convMemo) window.__convMemo.set(localStorage.getItem(window.curConvMemoKey) || "");
+const JSON_HEADERS = { "Content-Type": "application/json" };
+
+// 디바운스(+flush): 대화 전환 직전 보류 저장을 즉시 비우는 데 flush 사용.
+function debounced(fn, ms) {
+  let t = null, lastArgs = null;
+  const w = (...a) => { lastArgs = a; clearTimeout(t); t = setTimeout(() => { t = null; fn(...lastArgs); }, ms); };
+  w.flush = () => { if (t) { clearTimeout(t); t = null; fn(...lastArgs); } };
+  return w;
 }
-// 첫 메시지 전 적어둔 임시(pending) 대화메모를 새로 생긴 대화 id로 승계.
+
+let memoReady = false;      // 최초 서버 로드 완료 전엔 저장 금지(에디터 생성 시 빈 PUT 방지)
+let memoSuppress = false;   // 로드 후 프로그램적 set() 중 되돌이 PUT 억제
+let pendingConvMemo = null; // 새 대화(아직 id 없음)에서 적어둔 대화 메모 보관
+
+const putGlobalMemo = debounced((md) => {
+  fetch("/api/memo", { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ body: md }) });
+}, 600);
+const putConvMemo = debounced((id, md) => {
+  fetch(`/api/conversations/${id}/memo`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ body: md }) });
+}, 600);
+
+window.__saveGlobalMemo = (md) => { if (memoReady && !memoSuppress) putGlobalMemo(md); };
+window.__saveConvMemo = (md) => {
+  if (!memoReady || memoSuppress) return;
+  if (currentConvId) putConvMemo(currentConvId, md);
+  else pendingConvMemo = md;  // 대화가 생기면 adoptPendingConvMemo로 flush
+};
+
+// 로드 완료 후 에디터에 프로그램적으로 값을 넣을 때 저장 콜백이 되돌이 PUT 하지 않도록 억제.
+function setMemoSuppressed(editor, value) {
+  const prev = memoSuppress;
+  memoSuppress = true;
+  editor.set(value || "");
+  setTimeout(() => { memoSuppress = prev; }, 0);  // 리스너가 마이크로태스크로 늦게 와도 커버
+}
+
+// 대화 전환 시 이 대화 전용 메모를 서버에서 로드.
+async function loadConvMemo(id) {
+  const m = window.__convMemo;
+  if (!m) return;
+  putConvMemo.flush();  // 직전 대화의 보류 저장 비우기
+  let body = "";
+  if (id) {
+    try {
+      const r = await fetch(`/api/conversations/${id}/memo`);
+      if (r.ok) body = (await r.json()).body || "";
+    } catch { /* 네트워크 실패 시 빈 값 */ }
+  }
+  pendingConvMemo = null;
+  setMemoSuppressed(m, body);
+}
+// 첫 메시지 전 적어둔 임시 대화메모를 새로 생긴 대화 id로 승계(서버에 flush).
 function adoptPendingConvMemo(id) {
-  const pending = localStorage.getItem(convMemoKey(null));
-  window.curConvMemoKey = convMemoKey(id);
-  if (pending) localStorage.setItem(window.curConvMemoKey, pending);
-  localStorage.removeItem(convMemoKey(null));  // 에디터 내용은 그대로, 키만 이동
+  const md = window.__convMemo ? window.__convMemo.get() : (pendingConvMemo || "");
+  pendingConvMemo = null;
+  if (md && md.trim()) {
+    fetch(`/api/conversations/${id}/memo`, { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ body: md }) });
+  }
 }
+
+// 에디터 준비 완료 시(index.html 모듈이 호출) 글로벌 + 현재 대화 메모 로드.
+// memoReady=false 동안 로드하므로 이 set들은 저장을 트리거하지 않는다.
+window.__onMemoEditorsReady = async () => {
+  try {
+    const r = await fetch("/api/memo");
+    if (r.ok && window.__memo) window.__memo.set((await r.json()).body || "");
+  } catch { /* ignore */ }
+  await loadConvMemo(currentConvId);
+  memoReady = true;  // 이제부터 사용자 편집은 서버에 저장
+};
 
 const getMemo = () => (window.__memo ? window.__memo.get() : "");
 const setMemo = (v) => { if (window.__memo) window.__memo.set(v); };
@@ -626,8 +680,7 @@ function newChat() {
 async function deleteConversation(id) {
   if (!confirm("이 대화를 삭제할까요?")) return;
   await fetch(`/api/conversations/${id}`, { method: "DELETE" });
-  localStorage.removeItem(convMemoKey(id));  // 대화 전용 메모도 정리
-  removeConvFromSidebar(id);
+  removeConvFromSidebar(id);  // 대화별 메모는 서버에서 CASCADE 삭제됨
   if (id === currentConvId) newChat();
 }
 

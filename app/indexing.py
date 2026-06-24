@@ -17,12 +17,12 @@ from app.wikilink import extract_links
 async def reindex_note(conn, note_id: int) -> None:
     """호출자 트랜잭션 안에서 단일 노트를 재인덱싱(commit 안 함)."""
     cur = await conn.execute(
-        "SELECT title, body FROM notes WHERE id = %s", (note_id,)
+        "SELECT title, body, user_id FROM notes WHERE id = %s", (note_id,)
     )
     row = await cur.fetchone()
     if row is None:
         raise ValueError(f"note {note_id} not found")
-    _title, body = row[0], row[1]
+    _title, body, user_id = row[0], row[1], row[2]
 
     # 기존 청크 제거(gin/hnsw 인덱스는 자동 정리).
     await conn.execute("DELETE FROM chunks WHERE note_id = %s", (note_id,))
@@ -42,10 +42,11 @@ async def reindex_note(conn, note_id: int) -> None:
     await conn.execute("DELETE FROM edges WHERE src_note = %s", (note_id,))
     for dst_title in extract_links(body):
         cur = await conn.execute(
-            "SELECT id FROM notes WHERE title = %s", (dst_title,)
+            "SELECT id FROM notes WHERE user_id = %s AND title = %s",
+            (user_id, dst_title),
         )
         dst = await cur.fetchone()
-        dst_note = dst[0] if dst else None  # 동명 노트 없으면 미해결(NULL)
+        dst_note = dst[0] if dst else None  # 같은 유저 동명 노트 없으면 미해결(NULL)
         await conn.execute(
             "INSERT INTO edges (src_note, dst_title, dst_note) "
             "VALUES (%s, %s, %s) "
@@ -59,12 +60,17 @@ async def reindex_note(conn, note_id: int) -> None:
     )
 
 
-async def resolve_inbound_links(conn, title: str, note_id: int) -> None:
-    """신규 노트 생성 시: 이 제목을 가리키던 미해결 edges를 채운다."""
+async def resolve_inbound_links(conn, title: str, note_id: int, user_id: int) -> None:
+    """신규 노트 생성 시: 이 제목을 가리키던 미해결 edges를 채운다.
+
+    같은 유저의 노트(src_note)가 건 링크만 해결한다(타 유저 동명 노트와 격리).
+    """
     await conn.execute(
-        "UPDATE edges SET dst_note = %s "
-        "WHERE dst_title = %s AND dst_note IS NULL",
-        (note_id, title),
+        "UPDATE edges e SET dst_note = %s "
+        "FROM notes s "
+        "WHERE e.src_note = s.id AND s.user_id = %s "
+        "AND e.dst_title = %s AND e.dst_note IS NULL",
+        (note_id, user_id, title),
     )
 
 
@@ -86,7 +92,7 @@ async def index_after_save(pool, note_id: int, *, is_new: bool) -> None:
             await reindex_note(conn, note_id)
             if is_new:
                 cur = await conn.execute(
-                    "SELECT title FROM notes WHERE id = %s", (note_id,)
+                    "SELECT title, user_id FROM notes WHERE id = %s", (note_id,)
                 )
-                title = (await cur.fetchone())[0]
-                await resolve_inbound_links(conn, title, note_id)
+                title, user_id = await cur.fetchone()
+                await resolve_inbound_links(conn, title, note_id, user_id)

@@ -113,3 +113,35 @@ async def test_versions_and_restore(notes_client):
     assert restored["action"] == "restored"
     page = (await client.get("/api/page/버전노트")).json()["page"]
     assert page["body"] == "버전1 본문."  # 본문 교체됨
+
+
+async def test_note_user_isolation(clean_db):
+    """두 유저가 동명 노트를 각자 가지며 서로의 목록/조회에 안 섞인다."""
+    pool = clean_db
+    from app.db import execute
+
+    await execute(pool, "INSERT INTO users (email, name) VALUES ('u2@x.com', 'U2')")
+    u2 = (await fetchrow(pool, "SELECT id FROM users WHERE email='u2@x.com'"))["id"]
+
+    llm = FakeLLMClient(complete_fn=lambda p, t: "t")
+    app1 = build_app(pool, llm=llm)  # FAKE_USER id=1
+    app2 = build_app(pool, llm=llm, user={"id": u2, "email": "u2@x.com", "name": "U2"})
+    async with AsyncClient(transport=ASGITransport(app=app1), base_url="http://test") as a1, \
+               AsyncClient(transport=ASGITransport(app=app2), base_url="http://test") as a2:
+        # 같은 제목 "메모"를 각자 다른 본문으로 저장 → (user_id, title) 유니크로 공존.
+        await _ingest(a1, "메모", "유저1 본문", ["공통"])
+        await _ingest(a2, "메모", "유저2 본문", ["공통"])
+
+        # 목록은 각자 1건씩, 본문도 각자 것.
+        p1 = (await a1.get("/api/pages")).json()["pages"]
+        p2 = (await a2.get("/api/pages")).json()["pages"]
+        assert [p["title"] for p in p1] == ["메모"]
+        assert [p["title"] for p in p2] == ["메모"]
+        assert (await a1.get("/api/page/메모")).json()["page"]["body"] == "유저1 본문"
+        assert (await a2.get("/api/page/메모")).json()["page"]["body"] == "유저2 본문"
+
+        # 검색도 격리: 유저2 본문 키워드로 유저1이 검색해도 안 나온다.
+        hits = (await a1.get("/api/search", params={"q": "유저2 본문"})).json()["results"]
+        assert all(h["title"] == "메모" for h in hits)  # 떠도 유저1의 '메모'만(타인 노트 없음)
+        titles_bodies = [(h["title"], h["snippet"]) for h in hits]
+        assert all("유저2 본문" not in snip for _, snip in titles_bodies)

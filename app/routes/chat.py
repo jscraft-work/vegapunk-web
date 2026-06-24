@@ -13,12 +13,13 @@ from __future__ import annotations
 import asyncio
 import json
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sse_starlette.sse import EventSourceResponse
 from starlette.background import BackgroundTask
 
 from app import memory, search
 from app.db import execute, fetch, fetchrow
+from app.deps import require_user
 from app.llm import LLMClient, get_llm
 
 router = APIRouter()
@@ -148,7 +149,7 @@ async def _generate_and_save(pool, llm, conv_id, prompt, hits) -> str:
     return answer
 
 
-async def _chat_stream(pool, llm, conv_id, q, *, new_conv, title):
+async def _chat_stream(pool, llm, conv_id, q, *, new_conv, title, user_id):
     try:
         if new_conv:
             yield _sse("conversation", {"id": conv_id, "title": title or ""})
@@ -163,7 +164,7 @@ async def _chat_stream(pool, llm, conv_id, q, *, new_conv, title):
 
         # 3. 검색 → sources (답변 전에 먼저).
         async with pool.connection() as conn:
-            hits = await search.search(conn, search_query)
+            hits = await search.search(conn, search_query, user_id)
         yield _sse("sources", _dedupe_sources(hits))
 
         # 4. 답변 컨텍스트 + 프롬프트 조립(이번 RAG만, 질문은 원문).
@@ -211,21 +212,31 @@ async def chat(
     q: str = Query(...),
     conv: int = Query(0),
     llm: LLMClient = Depends(get_llm),
+    user: dict = Depends(require_user),
 ):
     pool = request.app.state.pool
     new_conv = conv == 0
     if new_conv:
         row = await fetchrow(
             pool,
-            "INSERT INTO conversations DEFAULT VALUES RETURNING id, title",
-            None,
+            "INSERT INTO conversations (user_id) VALUES (%s) RETURNING id, title",
+            (user["id"],),
         )
         conv_id, title = row["id"], row["title"]
     else:
+        # 기존 대화는 소유권 확인(타 유저 대화에 끼어쓰기 차단).
+        owned = await fetchrow(
+            pool, "SELECT id FROM conversations WHERE id = %s AND user_id = %s",
+            (conv, user["id"]),
+        )
+        if owned is None:
+            raise HTTPException(status_code=404, detail="대화 없음")
         conv_id, title = conv, None
 
     return EventSourceResponse(
-        _chat_stream(pool, llm, conv_id, q, new_conv=new_conv, title=title),
+        _chat_stream(
+            pool, llm, conv_id, q, new_conv=new_conv, title=title, user_id=user["id"]
+        ),
         # 응답을 막지 않도록 요약은 스트림 종료 후 백그라운드로.
         background=BackgroundTask(memory.maybe_update_summary, pool, llm, conv_id),
     )
@@ -235,10 +246,12 @@ async def chat(
 
 
 @router.get("/api/conversations")
-async def list_conversations(request: Request) -> dict:
+async def list_conversations(request: Request, user: dict = Depends(require_user)) -> dict:
     rows = await fetch(
         request.app.state.pool,
-        "SELECT id, title, updated_at FROM conversations ORDER BY updated_at DESC",
+        "SELECT id, title, updated_at FROM conversations "
+        "WHERE user_id = %s ORDER BY updated_at DESC",
+        (user["id"],),
     )
     return {
         "conversations": [
@@ -249,10 +262,13 @@ async def list_conversations(request: Request) -> dict:
 
 
 @router.get("/api/conversations/{conv_id}")
-async def get_conversation(request: Request, conv_id: int) -> dict:
+async def get_conversation(
+    request: Request, conv_id: int, user: dict = Depends(require_user)
+) -> dict:
     pool = request.app.state.pool
     conv = await fetchrow(
-        pool, "SELECT id, title FROM conversations WHERE id = %s", (conv_id,)
+        pool, "SELECT id, title FROM conversations WHERE id = %s AND user_id = %s",
+        (conv_id, user["id"]),
     )
     if conv is None:
         return {"error": "not found"}
@@ -292,21 +308,31 @@ async def get_conversation(request: Request, conv_id: int) -> dict:
 
 
 @router.patch("/api/conversations/{conv_id}")
-async def rename_conversation(request: Request, conv_id: int, body: dict) -> dict:
+async def rename_conversation(
+    request: Request, conv_id: int, body: dict, user: dict = Depends(require_user)
+) -> dict:
     title = body.get("title")
     await execute(
         request.app.state.pool,
-        "UPDATE conversations SET title = %s, updated_at = now() WHERE id = %s",
-        (title, conv_id),
+        "UPDATE conversations SET title = %s, updated_at = now() "
+        "WHERE id = %s AND user_id = %s",
+        (title, conv_id, user["id"]),
     )
     return {"ok": True, "title": title}
 
 
 @router.post("/api/conversations/{conv_id}/retitle")
 async def retitle_conversation(
-    request: Request, conv_id: int, llm: LLMClient = Depends(get_llm)
+    request: Request, conv_id: int,
+    llm: LLMClient = Depends(get_llm), user: dict = Depends(require_user)
 ) -> dict:
     pool = request.app.state.pool
+    conv = await fetchrow(
+        pool, "SELECT id FROM conversations WHERE id = %s AND user_id = %s",
+        (conv_id, user["id"]),
+    )
+    if conv is None:
+        return {"error": "not found"}
     msgs = await fetch(
         pool,
         "SELECT role, content FROM messages WHERE conv_id = %s ORDER BY id LIMIT 6",
@@ -327,10 +353,12 @@ async def retitle_conversation(
 
 
 @router.delete("/api/conversations/{conv_id}")
-async def delete_conversation(request: Request, conv_id: int) -> dict:
+async def delete_conversation(
+    request: Request, conv_id: int, user: dict = Depends(require_user)
+) -> dict:
     await execute(
         request.app.state.pool,
-        "DELETE FROM conversations WHERE id = %s",
-        (conv_id,),
+        "DELETE FROM conversations WHERE id = %s AND user_id = %s",
+        (conv_id, user["id"]),
     )
     return {"deleted": True, "id": conv_id}

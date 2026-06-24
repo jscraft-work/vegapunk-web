@@ -44,7 +44,7 @@ async def chat_ctx(clean_db, monkeypatch):
     # 시드 노트 1개(citations FK 충족용).
     note = await fetchrow(
         pool,
-        "INSERT INTO notes (title, body) VALUES (%s, %s) RETURNING id",
+        "INSERT INTO notes (user_id, title, body) VALUES (1, %s, %s) RETURNING id",
         ("연봉협상", "이직 시 연봉 협상 팁."),
     )
     note_id = note["id"]
@@ -52,7 +52,7 @@ async def chat_ctx(clean_db, monkeypatch):
     # search 모킹: 호출된 쿼리를 기록하고 고정 hit 반환.
     search_calls = []
 
-    async def fake_search(conn, query):
+    async def fake_search(conn, query, user_id):
         search_calls.append(query)
         return [_hit(note_id, title="연봉협상")]
 

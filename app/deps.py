@@ -1,7 +1,8 @@
 """라우트 보호 의존성 (Task 10).
 
 `Depends(require_user)`를 `/api/*`에 적용한다. `/health`·`/login`·`/auth/*`·
-정적파일은 공개. 단일 사용자라 소유권 필터는 생략(향후 user_id 도입 자리만 표시).
+정적파일은 공개. 멀티유저: 각 핸들러가 `user = Depends(require_user)`로 받은
+`user["id"]`로 노트/대화/메모를 소유권 필터한다(0002 마이그레이션에서 user_id 도입).
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ from app.db import execute, fetch, fetchrow
 async def _insert_note(pool, title: str, body: str) -> int:
     row = await fetchrow(
         pool,
-        "INSERT INTO notes (title, body) VALUES (%s, %s) RETURNING id",
+        "INSERT INTO notes (user_id, title, body) VALUES (1, %s, %s) RETURNING id",
         (title, body),
     )
     return row["id"]

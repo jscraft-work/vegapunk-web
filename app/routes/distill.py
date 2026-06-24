@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Request
 
 from app import distill_match
 from app.db import fetch, fetchrow
+from app.deps import require_user
 from app.llm import LLMClient, get_llm
 
 router = APIRouter()
@@ -107,18 +108,43 @@ def _build_distill_prompt(convo: str, titles: list[str], tags: list[str]) -> str
 
 
 @router.post("/api/distill")
-async def distill(request: Request, body: dict, llm: LLMClient = Depends(get_llm)) -> dict:
+async def distill(
+    request: Request, body: dict,
+    llm: LLMClient = Depends(get_llm), user: dict = Depends(require_user)
+) -> dict:
     pool = request.app.state.pool
     conv_id = body["conv_id"]
 
+    # 대화 소유권 확인 후 메시지 로드.
+    conv = await fetchrow(
+        pool, "SELECT id FROM conversations WHERE id = %s AND user_id = %s",
+        (conv_id, user["id"]),
+    )
+    if conv is None:
+        return {"candidates": []}
     msgs = await fetch(
         pool,
         "SELECT role, content FROM messages WHERE conv_id = %s ORDER BY id",
         (conv_id,),
     )
     convo = "\n".join(f"{m['role']}: {m['content']}" for m in msgs)
-    titles = [r["title"] for r in await fetch(pool, "SELECT title FROM notes")]
-    tags = [r["name"] for r in await fetch(pool, "SELECT name FROM tags")]
+    titles = [
+        r["title"]
+        for r in await fetch(
+            pool, "SELECT title FROM notes WHERE user_id = %s", (user["id"],)
+        )
+    ]
+    # 기존 태그 재사용 유도: 그 유저가 실제로 쓰는 태그만.
+    tags = [
+        r["name"]
+        for r in await fetch(
+            pool,
+            "SELECT DISTINCT t.name FROM tags t "
+            "JOIN note_tags nt ON nt.tag_id = t.id "
+            "JOIN notes n ON n.id = nt.note_id AND n.user_id = %s",
+            (user["id"],),
+        )
+    ]
 
     raw = await llm.complete(
         _build_distill_prompt(convo, titles, tags), tier="default"
@@ -129,7 +155,9 @@ async def distill(request: Request, body: dict, llm: LLMClient = Depends(get_llm
     for c in candidates:
         if not isinstance(c, dict) or not c.get("title") or not c.get("body"):
             continue
-        target = await distill_match.find_merge_target(pool, c["title"], c["body"])
+        target = await distill_match.find_merge_target(
+            pool, user["id"], c["title"], c["body"]
+        )
         out.append(
             {
                 "title": c["title"],
@@ -150,14 +178,16 @@ async def distill(request: Request, body: dict, llm: LLMClient = Depends(get_llm
 
 @router.post("/api/notes/merge-preview")
 async def merge_preview(
-    request: Request, body: dict, llm: LLMClient = Depends(get_llm)
+    request: Request, body: dict,
+    llm: LLMClient = Depends(get_llm), user: dict = Depends(require_user)
 ) -> dict:
     pool = request.app.state.pool
     target_note_id = body["target_note_id"]
     candidate_body = body["candidate_body"]
 
     note = await fetchrow(
-        pool, "SELECT body FROM notes WHERE id = %s", (target_note_id,)
+        pool, "SELECT body FROM notes WHERE id = %s AND user_id = %s",
+        (target_note_id, user["id"]),
     )
     if note is None:
         return {"error": "target not found"}

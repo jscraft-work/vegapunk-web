@@ -24,9 +24,9 @@ def _norm(title: str) -> str:
     return "".join(title.split()).casefold()
 
 
-async def find_merge_target(pool, title: str, body: str) -> dict | None:
-    """후보의 병합 대상을 찾는다. {note_id, title, similarity} 또는 None."""
-    notes = await fetch(pool, "SELECT id, title FROM notes")
+async def find_merge_target(pool, user_id: int, title: str, body: str) -> dict | None:
+    """후보의 병합 대상을 찾는다(유저 노트 한정). {note_id, title, similarity} 또는 None."""
+    notes = await fetch(pool, "SELECT id, title FROM notes WHERE user_id = %s", (user_id,))
 
     # 1) 제목 신호(정규화 일치) — 강한 신호.
     cand = _norm(title)
@@ -42,7 +42,7 @@ async def find_merge_target(pool, title: str, body: str) -> dict | None:
     votes: dict[int, int] = {}
     async with pool.connection() as conn:
         for ch in chunks:
-            hits = await search._vector_search(conn, ch, 1)  # 청크별 최근접 1건
+            hits = await search._vector_search(conn, ch, 1, user_id)  # 청크별 최근접 1건
             if hits and hits[0][2] <= MATCH_DIST:
                 nid = hits[0][1]
                 votes[nid] = votes.get(nid, 0) + 1

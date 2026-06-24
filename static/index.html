@@ -171,9 +171,8 @@
   <script src="/static/app.js"></script>
   <script type="module">
     // Milkdown WYSIWYG 메모 에디터 2개 (노션식 입력 변환). @milkdown/kit = ProseMirror 자체번들 → 무빌드 CDN.
-    //  · 글로벌 메모: vegapunk_memo 키에 고정 저장.
-    //  · 대화별 메모: 저장 시 window.curConvMemoKey(앱이 대화 전환 때 갱신)를 읽어 그 키에 저장.
-    const GLOBAL_KEY = "vegapunk_memo";
+    //  · 저장은 서버. onSave 콜백이 app.js의 window.__saveGlobalMemo / __saveConvMemo로 위임.
+    //  · 초기값은 빈 값으로 만들고, 준비되면 window.__onMemoEditorsReady가 서버에서 로드.
     const V = "https://esm.sh/@milkdown/kit@7";
 
     // 에디터 1개 생성 팩토리. onSave(md): 저장 콜백. 실패 시 textarea 폴백.
@@ -208,10 +207,8 @@
 
     const gEl = document.getElementById("memo-editor-global");
     const cEl = document.getElementById("memo-editor-conv");
-    const gInit = localStorage.getItem(GLOBAL_KEY) || "";
-    const cInit = localStorage.getItem(window.curConvMemoKey) || "";
-    const saveGlobal = (md) => localStorage.setItem(GLOBAL_KEY, md);
-    const saveConv = (md) => localStorage.setItem(window.curConvMemoKey, md);
+    const saveGlobal = (md) => window.__saveGlobalMemo && window.__saveGlobalMemo(md);
+    const saveConv = (md) => window.__saveConvMemo && window.__saveConvMemo(md);
 
     try {
       const [core, cm, gfmM, listenerM, historyM, utils] = await Promise.all([
@@ -223,13 +220,15 @@
         import(`${V}/utils`),
       ]);
       const mods = { core, cm, gfmM, listenerM, historyM, utils };
-      window.__memo = await makeMemoEditor(mods, gEl, gInit, saveGlobal);
-      window.__convMemo = await makeMemoEditor(mods, cEl, cInit, saveConv);
+      window.__memo = await makeMemoEditor(mods, gEl, "", saveGlobal);
+      window.__convMemo = await makeMemoEditor(mods, cEl, "", saveConv);
     } catch (e) {
       console.error("Milkdown 로드 실패 → textarea 폴백:", e);
-      window.__memo = makeTextareaFallback(gEl, gInit, "자유 메모…", saveGlobal);
-      window.__convMemo = makeTextareaFallback(cEl, cInit, "이 대화에 대한 메모…", saveConv);
+      window.__memo = makeTextareaFallback(gEl, "", "자유 메모…", saveGlobal);
+      window.__convMemo = makeTextareaFallback(cEl, "", "이 대화에 대한 메모…", saveConv);
     }
+    // 에디터 준비 완료 → app.js가 서버에서 글로벌/대화 메모를 로드.
+    if (window.__onMemoEditorsReady) window.__onMemoEditorsReady();
   </script>
 </body>
 </html>
