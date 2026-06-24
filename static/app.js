@@ -21,6 +21,7 @@ const pageList = document.getElementById("page-list");
 const panel = document.getElementById("page-panel");
 const panelTitle = document.getElementById("panel-title");
 const panelBody = document.getElementById("panel-body");
+let currentPageBody = "";  // 현재 노트의 원본(마크다운) 본문 — 편집 진입 시 사용
 
 let activeTag = null;  // 지식 사이드바 태그 필터
 
@@ -77,9 +78,11 @@ async function openPage(title, from) {
   const { page, titles } = await r.json();
   knownTitles = new Set(titles);
   currentPageTitle = page.title;
+  currentPageBody = page.body || "";
   panelTitle.textContent = page.title;
   document.getElementById("ptags-input").value = (page.tags || []).join(", ");
-  panelBody.innerHTML = renderMarkdown(page.body || "");
+  panelBody.innerHTML = renderMarkdown(currentPageBody);
+  exitEditMode();  // 항상 읽기 모드로 진입
   if (from) pageReturnTo = from;  // 명시 호출(사이드바/관리/출처)만 갱신, 위키링크 점프는 유지
   showPane("page");
   document.querySelector(".panel-scroll").scrollTop = 0;
@@ -128,6 +131,93 @@ document.getElementById("panel-delete").onclick = async () => {
   loadPages();
   if (pageReturnTo === "manage") await openManage(); else showPane("chat");
 };
+// ---- 노트 수동 편집/생성 (Create/Update) ----
+const panelTitleInput = document.getElementById("panel-title-input");
+const panelBodyEdit = document.getElementById("panel-body-edit");
+const btnEdit = document.getElementById("panel-edit");
+const btnSave = document.getElementById("panel-save");
+const btnCancel = document.getElementById("panel-cancel");
+const btnVersions = document.getElementById("panel-versions");
+let editingNew = false;  // true면 새 노트 작성(제목 입력 가능), false면 기존 노트 수정
+
+// 편집 모드 진입. isNew=true면 빈 새 노트(제목 입력 노출).
+function enterEditMode(isNew) {
+  editingNew = isNew;
+  panelBodyEdit.value = isNew ? "" : currentPageBody;
+  panelTitle.classList.toggle("hidden", isNew);
+  panelTitleInput.classList.toggle("hidden", !isNew);  // 제목 변경은 백링크가 깨져 신규에서만 허용
+  if (isNew) panelTitleInput.value = "";
+  panelBody.classList.add("hidden");
+  panelBodyEdit.classList.remove("hidden");
+  btnEdit.classList.add("hidden");
+  btnSave.classList.remove("hidden");
+  btnCancel.classList.remove("hidden");
+  btnVersions.classList.add("hidden");
+  document.getElementById("panel-delete").classList.toggle("hidden", isNew);
+  (isNew ? panelTitleInput : panelBodyEdit).focus();
+}
+
+// 읽기 모드로 복귀(저장/취소 후, openPage 진입 시).
+function exitEditMode() {
+  editingNew = false;
+  panelTitle.classList.remove("hidden");
+  panelTitleInput.classList.add("hidden");
+  panelBody.classList.remove("hidden");
+  panelBodyEdit.classList.add("hidden");
+  btnEdit.classList.remove("hidden");
+  btnSave.classList.add("hidden");
+  btnCancel.classList.add("hidden");
+  btnVersions.classList.remove("hidden");
+  document.getElementById("panel-delete").classList.remove("hidden");
+}
+
+btnEdit.onclick = () => { if (currentPageTitle) enterEditMode(false); };
+
+btnCancel.onclick = () => {
+  const dirty = panelBodyEdit.value !== (editingNew ? "" : currentPageBody);
+  if (dirty && !confirm("편집 중인 내용을 버릴까요?")) return;
+  if (editingNew) { exitEditMode(); showPane(pageReturnTo); }
+  else exitEditMode();
+};
+
+btnSave.onclick = async () => {
+  const title = editingNew ? panelTitleInput.value.trim() : currentPageTitle;
+  if (!title) { alert("제목을 입력하세요."); panelTitleInput.focus(); return; }
+  if (editingNew && knownTitles.has(title) &&
+      !confirm(`"${title}" 노트가 이미 있습니다. 그 노트에 덮어쓸까요?`)) return;
+  const body = panelBodyEdit.value;
+  const tags = ptagsInput.value.split(",").map((s) => s.trim()).filter(Boolean);
+  btnSave.disabled = true;
+  try {
+    const r = await fetch("/api/ingest", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, body, tags, source: "manual" }),
+    });
+    if (!r.ok) throw new Error(await r.text());
+  } catch (e) {
+    alert("저장 실패: " + e.message);
+    btnSave.disabled = false;
+    return;
+  }
+  btnSave.disabled = false;
+  await refreshTitles();
+  loadPages(); loadTags();
+  await openPage(title);  // 저장본을 다시 읽어 읽기 모드로 표시
+};
+
+// 사이드바 "+ 새 노트" → 빈 페이지 패널을 작성 모드로 연다.
+document.getElementById("new-page").onclick = () => {
+  currentPageTitle = null;
+  currentPageBody = "";
+  panelTitle.textContent = "";
+  ptagsInput.value = "";
+  panelBody.innerHTML = "";
+  pageReturnTo = "manage";  // 닫으면 지식 관리 뷰로
+  showPane("page");
+  enterEditMode(true);
+  document.querySelector(".panel-scroll").scrollTop = 0;
+};
+
 document.getElementById("page-search").addEventListener("input", (e) => loadPages(e.target.value));
 
 // 위키링크/패널 클릭 위임
