@@ -25,6 +25,7 @@ _DATA_TABLES = [
     "edges",
     "chunks",
     "notes",
+    "identities",
     "users",
 ]
 

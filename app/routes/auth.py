@@ -15,13 +15,16 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from app.config import get_settings
-from app.db import fetchrow
+from app.db import execute, fetchrow
 from app.session import (
     COOKIE_NAME,
     create_session,
     destroy_session,
     get_session,
+    pop_link_state,
+    pop_link_token,
     pop_oauth_state,
+    stash_link_state,
     stash_oauth_state,
 )
 
@@ -56,7 +59,7 @@ def _redirect_uri(settings, provider: str) -> str:
 
 
 @router.get("/auth/login/{provider}")
-async def login(request: Request, provider: str):
+async def login(request: Request, provider: str, link: str = ""):
     if provider not in _PROVIDERS:
         return JSONResponse({"detail": "unknown provider"}, status_code=404)
     settings = get_settings()
@@ -65,6 +68,9 @@ async def login(request: Request, provider: str):
         return JSONResponse({"detail": f"{provider} 미설정"}, status_code=404)
     state = secrets.token_urlsafe(24)
     await stash_oauth_state(request.app.state.session_store, state, provider)
+    # 계정 연동 흐름: link 토큰을 state에 묶어 콜백에서 복원(OAuth는 link를 안 돌려줌).
+    if link:
+        await stash_link_state(request.app.state.session_store, state, link)
     params = {
         "response_type": "code",
         "client_id": client_id,
@@ -129,7 +135,9 @@ async def _fetch_profile(settings, provider: str, code: str) -> dict:
 
 
 @router.get("/auth/callback/{provider}")
-async def callback(request: Request, provider: str, code: str = "", state: str = ""):
+async def callback(
+    request: Request, provider: str, code: str = "", state: str = "", link: str = ""
+):
     if provider not in _PROVIDERS:
         return JSONResponse({"detail": "unknown provider"}, status_code=404)
     if not code or not state:
@@ -142,30 +150,115 @@ async def callback(request: Request, provider: str, code: str = "", state: str =
         profile = await _fetch_profile(settings, provider, code)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"detail": f"oauth 실패: {e}"}, status_code=502)
+    # 연동 흐름이면 link 토큰을 state로 복원(쿼리에 직접 온 link도 허용).
+    store = request.app.state.session_store
+    link = link or (await pop_link_state(store, state)) or ""
+    if link:
+        return await _link_and_respond(request, profile, link)
     return await _login_and_redirect(request, profile)
 
 
-# ── user upsert + 서버세션 ────────────────────────────────────
+# ── find-or-create (신원 기반 식별) ──────────────────────────
 
 
-async def _upsert_user(pool, profile: dict) -> dict:
-    # 이메일 미동의(카카오 등) → placeholder 키로 유니크 충족.
-    email = profile.get("email") or f"{profile['provider']}:{profile['sub']}"
-    name = profile.get("name") or email
-    return await fetchrow(
+async def resolve_user(pool, profile: dict) -> int:
+    """프로필(provider/sub/email/name) → user_id. 신원 기반으로 수렴시킨다."""
+    # 1) 아는 신원?
+    row = await fetchrow(
         pool,
-        "INSERT INTO users (email, name) VALUES (%s, %s) "
-        "ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name "
-        "RETURNING id, email, name",
-        (email, name),
+        "SELECT user_id FROM identities WHERE provider=%s AND sub=%s",
+        (profile["provider"], profile["sub"]),
     )
+    if row:
+        return row["user_id"]
+    # 2) 일회용 브리지: identity 0개인 레거시 user와 email 일치 시 흡수(탈취 위험 없음).
+    user_id = None
+    if profile.get("email"):
+        legacy = await fetchrow(
+            pool,
+            "SELECT u.id FROM users u WHERE u.email=%s AND u.status='active' "
+            "AND NOT EXISTS (SELECT 1 FROM identities i WHERE i.user_id=u.id)",
+            (profile["email"],),
+        )
+        if legacy:
+            user_id = legacy["id"]
+    # 3) 신규 가입(user 생성). 이메일 미동의 → placeholder 키.
+    if user_id is None:
+        u = await fetchrow(
+            pool,
+            "INSERT INTO users (email, name) VALUES (%s,%s) RETURNING id",
+            (
+                profile.get("email") or f'{profile["provider"]}:{profile["sub"]}',
+                profile.get("name"),
+            ),
+        )
+        user_id = u["id"]
+    await execute(
+        pool,
+        "INSERT INTO identities (user_id, provider, sub, email) VALUES (%s,%s,%s,%s) "
+        "ON CONFLICT (provider, sub) DO NOTHING",
+        (user_id, profile["provider"], profile["sub"], profile.get("email")),
+    )
+    return user_id
+
+
+async def merge_users(pool, src_id: int, dst_id: int) -> None:
+    """src 계정을 dst로 흡수(삭제 금지, 툼스톤). 데이터 이전 후 src를 merged 처리."""
+    async with pool.connection() as conn:
+        async with conn.transaction():
+            # user_memo는 PK가 user_id라 dst에 이미 행이 있으면 충돌 → dst 우선(src 행 삭제).
+            await conn.execute(
+                "DELETE FROM user_memo WHERE user_id=%s "
+                "AND EXISTS (SELECT 1 FROM user_memo WHERE user_id=%s)",
+                (src_id, dst_id),
+            )
+            for tbl in ("notes", "conversations", "identities", "user_memo"):
+                await conn.execute(
+                    f"UPDATE {tbl} SET user_id=%s WHERE user_id=%s", (dst_id, src_id)
+                )
+            await conn.execute(
+                "UPDATE users SET status='merged', merged_into=%s, merged_at=now() "
+                "WHERE id=%s",
+                (dst_id, src_id),
+            )
+
+
+async def _link_and_respond(request: Request, profile: dict, link_token: str):
+    """연동 콜백: link 토큰의 current_user에 새 신원을 붙인다(충돌 시 거부)."""
+    store = request.app.state.session_store
+    pool = request.app.state.pool
+    current_user_id = await pop_link_token(store, link_token)
+    if current_user_id is None:
+        return JSONResponse(
+            {"status": "error", "detail": "invalid/expired link token"}, status_code=400
+        )
+    existing = await fetchrow(
+        pool,
+        "SELECT user_id FROM identities WHERE provider=%s AND sub=%s",
+        (profile["provider"], profile["sub"]),
+    )
+    if existing and existing["user_id"] != current_user_id:
+        # 자동병합 금지 → 병합 플로우 안내.
+        return JSONResponse(
+            {"status": "conflict", "other_user": existing["user_id"]}
+        )
+    await execute(
+        pool,
+        "INSERT INTO identities (user_id, provider, sub, email) VALUES (%s,%s,%s,%s) "
+        "ON CONFLICT (provider, sub) DO NOTHING",
+        (current_user_id, profile["provider"], profile["sub"], profile.get("email")),
+    )
+    return JSONResponse({"status": "linked", "user_id": current_user_id})
+
+
+# ── 서버세션 ──────────────────────────────────────────────────
 
 
 async def _login_and_redirect(request: Request, profile: dict) -> RedirectResponse:
     settings = get_settings()
-    user = await _upsert_user(request.app.state.pool, profile)
+    user_id = await resolve_user(request.app.state.pool, profile)
     token = await create_session(
-        request.app.state.session_store, user["id"], settings.SESSION_TTL
+        request.app.state.session_store, user_id, settings.SESSION_TTL
     )
     resp = RedirectResponse(url="/", status_code=302)
     resp.set_cookie(
