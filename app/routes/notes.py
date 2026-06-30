@@ -218,7 +218,6 @@ async def ingest(request: Request, body: dict, user: dict = Depends(require_user
         body=body["body"],
         tags=body.get("tags", []),
         merge_into=body.get("merge_into"),
-        source=body.get("source", "manual"),
     )
 
 
@@ -293,79 +292,3 @@ async def delete_page(
             # 노트 삭제 → chunks/edges(src) CASCADE 정리.
             await conn.execute("DELETE FROM notes WHERE id = %s", (note["id"],))
     return {"deleted": True, "title": title}
-
-
-# ── 버전 이력 / 되돌리기 ───────────────────────────────────────
-
-
-@router.get("/api/page/{title}/versions")
-async def list_versions(
-    request: Request, title: str, user: dict = Depends(require_user)
-) -> dict:
-    pool = request.app.state.pool
-    note = await fetchrow(
-        pool, "SELECT id FROM notes WHERE user_id = %s AND title = %s",
-        (user["id"], title),
-    )
-    if note is None:
-        return {"error": "not found"}
-    rows = await fetch(
-        pool,
-        "SELECT id, source, created_at FROM note_versions "
-        "WHERE note_id = %s ORDER BY id DESC",
-        (note["id"],),
-    )
-    return {
-        "versions": [
-            {"id": r["id"], "source": r["source"], "created_at": r["created_at"].isoformat()}
-            for r in rows
-        ]
-    }
-
-
-@router.get("/api/page/{title}/versions/{vid}")
-async def get_version(
-    request: Request, title: str, vid: int, user: dict = Depends(require_user)
-) -> dict:
-    # 버전의 소속 노트가 그 유저 것인지 확인(타 유저 버전 열람 차단).
-    row = await fetchrow(
-        request.app.state.pool,
-        "SELECT v.body FROM note_versions v JOIN notes n ON n.id = v.note_id "
-        "WHERE v.id = %s AND n.user_id = %s",
-        (vid, user["id"]),
-    )
-    if row is None:
-        return {"error": "not found"}
-    return {"body": row["body"]}
-
-
-@router.post("/api/page/{title}/restore")
-async def restore_version(
-    request: Request, title: str, body: dict, user: dict = Depends(require_user)
-) -> dict:
-    """버전 본문으로 되돌리기 = 저장의 일종(현재본 백업 + 재인덱싱)."""
-    pool = request.app.state.pool
-    version_id = body["version_id"]
-    ver = await fetchrow(
-        pool,
-        "SELECT v.body FROM note_versions v JOIN notes n ON n.id = v.note_id "
-        "WHERE v.id = %s AND n.user_id = %s",
-        (version_id, user["id"]),
-    )
-    if ver is None:
-        return {"error": "version not found"}
-    result = await ingest_note(
-        pool, user_id=user["id"], title=title, body=ver["body"],
-        tags=await _current_tags(pool, user["id"], title), source="restore",
-    )
-    return {"ok": True, "action": "restored", "note_id": result["note_id"]}
-
-
-async def _current_tags(pool, user_id: int, title: str) -> list[str]:
-    rows = await fetch(
-        pool,
-        "SELECT t.name FROM tags t JOIN note_tags nt ON nt.tag_id = t.id "
-        "JOIN notes n ON n.id = nt.note_id WHERE n.user_id = %s AND n.title = %s",
-        (user_id, title),
-    )
-    return [r["name"] for r in rows]

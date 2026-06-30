@@ -96,23 +96,17 @@ async def test_delete_unresolves(notes_client):
     assert edge is not None and edge["dst_note"] is None
 
 
-async def test_versions_and_restore(notes_client):
-    client, pool = notes_client
-    await _ingest(client, "버전노트", "버전1 본문.")
-    await _ingest(client, "버전노트", "버전2 본문.")  # 수정 → 버전 적재
+async def test_update_replaces_current_body(notes_client):
+    client, _ = notes_client
+    await _ingest(client, "수정노트", "이전 본문.")
+    updated = await _ingest(client, "수정노트", "새 본문.")
 
-    versions = (await client.get("/api/page/버전노트/versions")).json()["versions"]
-    assert len(versions) >= 1
-    v_id = versions[-1]["id"]  # 가장 오래된(버전1 백업)
-    body = (await client.get(f"/api/page/버전노트/versions/{v_id}")).json()["body"]
-    assert body == "버전1 본문."
+    assert updated["action"] == "updated"
+    page = (await client.get("/api/page/수정노트")).json()["page"]
+    assert page["body"] == "새 본문."
 
-    restored = (
-        await client.post("/api/page/버전노트/restore", json={"version_id": v_id})
-    ).json()
-    assert restored["action"] == "restored"
-    page = (await client.get("/api/page/버전노트")).json()["page"]
-    assert page["body"] == "버전1 본문."  # 본문 교체됨
+    results = (await client.get("/api/search", params={"q": "새 본문"})).json()["results"]
+    assert any(r["title"] == "수정노트" for r in results)
 
 
 async def test_note_user_isolation(clean_db):

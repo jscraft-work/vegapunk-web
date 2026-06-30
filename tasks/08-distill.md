@@ -1,7 +1,7 @@
 # Task 08: distill (지식 저장)
 
 ## 목표
-대화를 읽어 **노트 후보**를 만들고(기획서 12장), 각 후보의 **병합 대상**을 검색엔진 재사용으로 찾고, 병합 시 **LLM 통합(재작성)** 미리보기+diff를 제공하며, 최종 저장(`/api/ingest`)에서 신규/병합/수정 후 인덱싱한다. append 금지, 3중 안전망(보존규칙·diff·버전백업) 준수.
+대화를 읽어 **노트 후보**를 만들고(기획서 12장), 각 후보의 **병합 대상**을 검색엔진 재사용으로 찾고, 병합 시 **LLM 통합(재작성)** 미리보기+diff를 제공하며, 최종 저장(`/api/ingest`)에서 신규/병합/수정 후 인덱싱한다. append 금지, 보존규칙·diff 안전망 준수.
 
 ## 선행 조건
 - Task 03(인덱싱), 04(검색), 05(LLM) 완료. (07은 권장이나 독립 가능.)
@@ -28,7 +28,7 @@
 
 ### 8.4 저장 (ingest)
 - `POST /api/ingest { title, body, tags, merge_into: note_id|null }` → `{ note_id, title, action: "created"|"merged"|"updated" }`.
-- 저장 트랜잭션: (병합/수정이면) `note_versions`에 **이전 본문 백업** → notes upsert → tags/note_tags 정규화(기존 태그 재사용, 없으면 생성).
+- 저장 트랜잭션: notes upsert → tags/note_tags 정규화(기존 태그 재사용, 없으면 생성). 병합/수정은 현재 본문을 교체한다.
 - **인덱싱**:
   - 단건(수동/단일 후보) → **동기**(03 `index_after_save`, 저장 직후 검색 가능).
   - distill 다건 → **FastAPI BackgroundTasks 비동기**(완료 전 그 노트만 잠시 검색서 빠짐).
@@ -41,7 +41,7 @@
 - [ ] `tests/test_distill_match.py::test_chunk_concentration` — 제목 다르고 내용 겹치는 후보 → 매칭 몰린 note가 target.
 - [ ] `tests/test_distill_match.py::test_below_threshold_new` — 약한 매칭 → merge_target null(새 노트).
 - [ ] `tests/test_distill.py::test_merge_preview` — 보존규칙 프롬프트 전달 + merged_body/diff 반환.
-- [ ] `tests/test_distill.py::test_ingest_versions` — 병합 저장 시 note_versions에 이전 본문 적재, action 정확.
+- [ ] `tests/test_distill.py::test_ingest_merge_replaces_body` — 병합 저장 시 현재 본문/태그 갱신, action 정확.
 - [ ] `tests/test_distill.py::test_ingest_reindex` — 저장 후 새 본문이 검색에 반영(동기 경로).
 
 **검증 실행 명령어**: `uv run pytest tests/test_distill.py tests/test_distill_match.py -q`

@@ -2,7 +2,6 @@ from app.db import MIGRATIONS_DIR, run_migrations
 
 EXPECTED_TABLES = {
     "notes",
-    "note_versions",
     "chunks",
     "edges",
     "tags",

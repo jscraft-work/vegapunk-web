@@ -24,7 +24,6 @@ _DATA_TABLES = [
     "tags",
     "edges",
     "chunks",
-    "note_versions",
     "notes",
     "users",
 ]

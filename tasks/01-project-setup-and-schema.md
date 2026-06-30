@@ -31,7 +31,7 @@ FastAPI 앱이 기동되고, Postgres에 전체 스키마(기획서 9장)가 마
 - 헬퍼: `async def fetch/fetchrow/execute(...)` 또는 풀에서 `conn`을 얻는 컨텍스트 — 이후 태스크가 공통으로 쓸 최소 인터페이스만.
 
 ### 1.4 마이그레이션 파일 (`migrations/0001_init.sql`)
-- 기획서 9장의 **전체 스키마를 그대로** 작성: `CREATE EXTENSION vector` / `CREATE EXTENSION pg_bigm`, notes, note_versions, chunks(+ embedding vector(1024), hnsw 인덱스, `idx_chunks_bigm`=`gin (text gin_bigm_ops)`, note 인덱스), edges(+idx), tags, note_tags, conversations, messages(+idx), message_citations(note_id 기준), users.
+- 기획서 9장의 **전체 스키마를 그대로** 작성: `CREATE EXTENSION vector` / `CREATE EXTENSION pg_bigm`, notes, chunks(+ embedding vector(1024), hnsw 인덱스, `idx_chunks_bigm`=`gin (text gin_bigm_ops)`, note 인덱스), edges(+idx), tags, note_tags, conversations, messages(+idx), message_citations(note_id 기준), users.
 - 모든 시각 컬럼 `TIMESTAMPTZ DEFAULT now()`.
 
 ### 1.5 앱 팩토리 + health (`app/main.py`)

@@ -66,7 +66,7 @@ async def test_merge_preview(distill_client):
     assert "삭제하지" in llm.last_prompt
 
 
-async def test_ingest_versions(clean_db):
+async def test_ingest_merge_replaces_body(clean_db):
     pool = clean_db
     # 기존 노트.
     note = await fetchrow(
@@ -84,11 +84,15 @@ async def test_ingest_versions(clean_db):
         merge_into=note["id"],
     )
     assert result["action"] == "merged"
-    # note_versions에 이전 본문 백업.
-    versions = await fetch(
-        pool, "SELECT body FROM note_versions WHERE note_id=%s", (note["id"],)
+    updated = await fetchrow(pool, "SELECT body FROM notes WHERE id=%s", (note["id"],))
+    assert updated["body"] == "통합된 새 본문."
+    tags = await fetch(
+        pool,
+        "SELECT t.name FROM tags t JOIN note_tags nt ON nt.tag_id = t.id "
+        "WHERE nt.note_id = %s",
+        (note["id"],),
     )
-    assert any(v["body"] == "이전 본문." for v in versions)
+    assert [t["name"] for t in tags] == ["커리어"]
 
 
 async def test_ingest_reindex(clean_db):
