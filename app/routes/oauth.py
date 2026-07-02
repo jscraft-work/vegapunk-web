@@ -38,12 +38,12 @@ router = APIRouter()
 
 # 상류 로그인 세션이 없을 때 기본으로 태울 provider(“기본” 흐름).
 _DEFAULT_PROVIDER = "github"
-# 콜백 허용 URL(정확 일치). 향후 claude.com 추가 대비.
-_ALLOWED_EXACT = {
-    "https://claude.ai/api/mcp/auth_callback",
-    "https://claude.com/api/mcp/auth_callback",
-}
-# Claude Code loopback 허용 호스트(포트 가변).
+# 콜백 허용: 신뢰 first-party 호스트(https, 경로 무관) + native 앱 loopback.
+# 정확경로 대신 호스트 기반 — ChatGPT 콜백 경로가 가변(connector_platform_oauth_redirect 등)
+# 이기 때문. 인가코드는 이 호스트들(claude/openai) 또는 사용자 본인 loopback으로만 전달되고
+# PKCE로 이중 봉인되므로, 호스트 고정 + https면 공격자 도달 불가.
+_ALLOWED_HOSTS = {"claude.ai", "claude.com", "chatgpt.com", "chat.openai.com"}
+# native 앱(Codex/Claude Code) loopback 허용 호스트(포트 가변).
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _SCOPE_DEFAULT = "mcp"
 
@@ -61,10 +61,11 @@ def _base(request: Request) -> str:
 
 
 def _redirect_uri_allowed(uri: str) -> bool:
-    if uri in _ALLOWED_EXACT:
-        return True
     p = urlparse(uri)
-    # Claude Code loopback: http + localhost/127.0.0.1(포트·경로 가변).
+    # 신뢰 first-party 호스트(https, 경로 무관).
+    if p.scheme == "https" and p.hostname in _ALLOWED_HOSTS:
+        return True
+    # native 앱(Codex/Claude Code) loopback: http + localhost류(포트·경로 가변).
     return p.scheme == "http" and p.hostname in _LOOPBACK_HOSTS
 
 

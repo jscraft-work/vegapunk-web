@@ -136,6 +136,16 @@ async def test_dcr_register(oauth_client):
     # 허용되지 않은 redirect_uri는 거부.
     bad = await _register(ac, "https://evil.example.com/cb")
     assert bad.status_code == 400
+    # ChatGPT 커넥터: chatgpt.com/chat.openai.com https 콜백(경로 무관) 허용.
+    cg = await _register(ac, "https://chatgpt.com/connector_platform_oauth_redirect")
+    assert cg.status_code == 201
+    cg2 = await _register(ac, "https://chatgpt.com/any/other/path")
+    assert cg2.status_code == 201
+    oa = await _register(ac, "https://chat.openai.com/oauth/callback")
+    assert oa.status_code == 201
+    # 신뢰 호스트라도 http(비-loopback)면 거부(https 필수).
+    insecure = await _register(ac, "http://chatgpt.com/connector_platform_oauth_redirect")
+    assert insecure.status_code == 400
 
 
 async def test_authcode_pkce_flow(oauth_client):
