@@ -37,11 +37,18 @@ LLM 오케스트레이션 층 ── 입구마다 다름
 ## 태스크 목록
 | # | 태스크 | 설명 | 상태 |
 |---|--------|------|------|
-| 01 | [계정 모델 (멀티 신원)](01-account-model.md) | users↔identities 분리, find-or-create, link_account, 병합+툼스톤, user_id 스코프 점검 | ⬜ |
-| 02 | [OAuth 2.1 인가서버](02-oauth-authorization-server.md) | authlib AS, 디스커버리·PKCE·토큰 발급, Claude 콜백, Redis 토큰 저장 | ⬜ |
-| 03 | [MCP 서버 마운트 & 도구](03-mcp-server-and-tools.md) | `/mcp` 마운트, 도구 6종, search 게이트 플래그 | ⬜ |
-| 04 | [배포 & 커넥터 연결 & 교차검증](04-deploy-and-connect.md) | 공개 노출, 커넥터 등록, 웹↔claude.ai 노트 공유 검증 | ⬜ |
+| 01 | [계정 모델 (멀티 신원)](01-account-model.md) | users↔identities 분리, find-or-create, link_account, 병합+툼스톤, user_id 스코프 점검 | ✅ |
+| 02 | [OAuth 2.1 인가서버](02-oauth-authorization-server.md) | authlib AS, 디스커버리·PKCE·토큰 발급, Claude 콜백, Redis 토큰 저장 | ✅ |
+| 03 | [MCP 서버 마운트 & 도구](03-mcp-server-and-tools.md) | `/mcp` 마운트, 도구 8종, search 게이트 플래그 | ✅ |
+| 04 | [배포 & 커넥터 연결 & 교차검증](04-deploy-and-connect.md) | 공개 노출, 커넥터 등록, 웹↔claude.ai 노트 공유 검증 | ✅ |
+| 05 | [연결 동의 화면](05-consent-screen.md) | authorize 코드 발급 전 항상 동의 화면(어느 계정에 연결하는지) | ⬜ |
+| 06 | [Google OAuth provider](06-google-provider.md) | github/kakao 패턴으로 Google(OIDC) 추가 | ⬜ |
+| 07 | [공개 엔드포인트 하드닝](07-public-endpoint-hardening.md) | rate limit, 토큰 revoke, link 토큰 TTL | ⬜ |
+| 08 | [Admin 콘솔 + 웹앱 재편](08-admin-console.md) | 계정·토큰 관리 + 지식 관리, Admin 우선 / Chat 보조 | ⬜ |
 
 ## 의존 순서
-01(계정) → 02(AS, 01의 user_id 위에 토큰 발급) → 03(도구, 02의 인증으로 user_id 스코프) → 04(배포·연결).
-v1 범위: 위 4개 전부 + Code 연동 용도. 나중: 민감정보 암호화, 복구 코드, rate limiting 정교화, primary_email 변경 UI, 신원 해제.
+**완료(프로덕션 배포됨)**: 01(계정) → 02(AS) → 03(도구) → 04(배포·연결). github+kakao 멀티신원 링크까지 실검증 완료.
+
+**남음**: 05(동의 화면)·06(Google)은 인증 흐름 마감 → 07(하드닝) → 08(Admin 콘솔로 웹앱 재편). 05·06·07은 독립적이라 순서 자유, 08은 01·07 위에 올림.
+
+나중(태스크 밖): 민감정보 암호화, 복구 코드, primary_email 변경 UI.
