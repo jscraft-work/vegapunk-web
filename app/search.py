@@ -122,8 +122,25 @@ async def _graph_expand(
     return added
 
 
-async def search(conn, query: str, user_id: int) -> list[SearchHit]:
-    """하이브리드 검색 진입점. 상위 ``TOP_K`` SearchHit 반환(매칭 0건이면 []). 유저 노트로 한정."""
+# 무관성 게이트를 끈 검색(MCP 입구)의 반환 상한. 웹은 TOP_K(5) 유지.
+MCP_TOP_K_LIMIT = 30
+
+
+async def search(
+    conn,
+    query: str,
+    user_id: int,
+    *,
+    apply_gate: bool = True,
+    top_k: int = TOP_K,
+) -> list[SearchHit]:
+    """하이브리드 검색 진입점. 상위 ``top_k`` SearchHit 반환(매칭 0건이면 []). 유저 노트로 한정.
+
+    apply_gate=True(웹 기본): 관련성 게이트로 무관 노트를 걸러 TOP_K까지.
+    apply_gate=False(MCP): 게이트 생략 — 융합 후보를 점수순으로 top_k(상한 30)까지
+    그대로 반환(Claude가 원문을 읽고 판단). 링크 그래프 확장은 양쪽 공통.
+    """
+    top_k = max(1, min(top_k, MCP_TOP_K_LIMIT))
     vec = await _vector_search(conn, query, PER_LIST_K, user_id)
     big = await _bigm_search(conn, query, PER_LIST_K, user_id)
     if not vec and not big:
@@ -152,11 +169,10 @@ async def search(conn, query: str, user_id: int) -> list[SearchHit]:
             or bigm_score.get(cid, 0.0) >= BIGM_KEEP
         )
 
-    top = [
-        (cid, sc)
-        for cid, sc in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-        if _relevant(cid)
-    ][:TOP_K]
+    ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+    if apply_gate:
+        ordered = [(cid, sc) for cid, sc in ordered if _relevant(cid)]
+    top = ordered[:top_k]
     if not top:
         return []
 

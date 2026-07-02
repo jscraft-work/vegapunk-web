@@ -21,9 +21,11 @@ from app.session import (
     create_session,
     destroy_session,
     get_session,
+    pop_authreq_state,
     pop_link_state,
     pop_link_token,
     pop_oauth_state,
+    stash_authreq_state,
     stash_link_state,
     stash_oauth_state,
 )
@@ -59,7 +61,7 @@ def _redirect_uri(settings, provider: str) -> str:
 
 
 @router.get("/auth/login/{provider}")
-async def login(request: Request, provider: str, link: str = ""):
+async def login(request: Request, provider: str, link: str = "", authreq: str = ""):
     if provider not in _PROVIDERS:
         return JSONResponse({"detail": "unknown provider"}, status_code=404)
     settings = get_settings()
@@ -71,6 +73,9 @@ async def login(request: Request, provider: str, link: str = ""):
     # 계정 연동 흐름: link 토큰을 state에 묶어 콜백에서 복원(OAuth는 link를 안 돌려줌).
     if link:
         await stash_link_state(request.app.state.session_store, state, link)
+    # OAuth AS authorize 재개 흐름: authreq를 state에 묶어 콜백에서 복원.
+    if authreq:
+        await stash_authreq_state(request.app.state.session_store, state, authreq)
     params = {
         "response_type": "code",
         "client_id": client_id,
@@ -150,8 +155,19 @@ async def callback(
         profile = await _fetch_profile(settings, provider, code)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"detail": f"oauth 실패: {e}"}, status_code=502)
-    # 연동 흐름이면 link 토큰을 state로 복원(쿼리에 직접 온 link도 허용).
+    # OAuth AS authorize 재개: 이 콜백이 /oauth/authorize에서 시작됐다면 user_id 확정 후
+    # authorization code를 발급하고 Claude redirect_uri로 302(세션 대신 code 발급 분기).
     store = request.app.state.session_store
+    authreq = await pop_authreq_state(store, state)
+    if authreq:
+        from app.routes.oauth import resume_authorize
+
+        user_id = await resolve_user(request.app.state.pool, profile)
+        resumed = await resume_authorize(request, user_id, authreq)
+        if resumed is not None:
+            return resumed
+        return JSONResponse({"detail": "authorize 재개 실패(만료)"}, status_code=400)
+    # 연동 흐름이면 link 토큰을 state로 복원(쿼리에 직접 온 link도 허용).
     link = link or (await pop_link_state(store, state)) or ""
     if link:
         return await _link_and_respond(request, profile, link)

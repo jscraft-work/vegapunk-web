@@ -8,7 +8,8 @@ from fastapi.staticfiles import StaticFiles
 from app.config import get_settings
 from app.db import ensure_extensions, make_pool, run_migrations
 from app.deps import require_user
-from app.routes import account, auth, chat, distill, health, memo, notes
+from app.mcp_server import McpAuthMiddleware, build_mcp
+from app.routes import account, auth, chat, distill, health, memo, notes, oauth
 from app.session import COOKIE_NAME, MemoryStore, get_session
 from app import settings as app_settings
 
@@ -48,18 +49,29 @@ async def lifespan(app: FastAPI):
 
     await app_settings.load(app.state.session_store)  # 런타임 설정을 Redis에서 복원
 
-    try:
-        yield
-    finally:
-        await pool.close()
+    # 마운트된 MCP 서버(streamable-http)의 세션 매니저 lifespan을 부모와 함께 구동.
+    # (FastAPI는 하위 마운트 앱의 lifespan을 자동 실행하지 않으므로 직접 진입.)
+    mcp_app = getattr(app.state, "mcp_app", None)
+    if mcp_app is not None:
+        async with mcp_app.router.lifespan_context(mcp_app):
+            try:
+                yield
+            finally:
+                await pool.close()
+    else:
+        try:
+            yield
+        finally:
+            await pool.close()
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="vegapunk", lifespan=lifespan)
 
-    # 공개: health, auth.
+    # 공개: health, auth, oauth(AS: 디스커버리·authorize·token·register·/mcp).
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(oauth.router)
     # 보호: /api/* (chat·distill·notes).
     protected = [Depends(require_user)]
     app.include_router(chat.router, dependencies=protected)
@@ -68,6 +80,13 @@ def create_app() -> FastAPI:
     app.include_router(memo.router, dependencies=protected)
     # account: 라우트 함수에 require_user를 직접 Depends → router-level 미적용.
     app.include_router(account.router)
+
+    # MCP 서버(원격 도구)를 /mcp로 마운트(같은 프로세스: DB 풀·fastembed·서비스 공유).
+    # 인증은 McpAuthMiddleware(순수 ASGI)가 Bearer→user_id로 처리한다.
+    mcp_app = build_mcp().streamable_http_app()
+    app.state.mcp_app = mcp_app
+    app.mount("/mcp", mcp_app)
+    app.add_middleware(McpAuthMiddleware)
 
     @app.get("/login")
     async def login_page():

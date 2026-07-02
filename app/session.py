@@ -108,3 +108,23 @@ async def pop_link_state(store, state: str) -> str | None:
     if raw is None:
         return None
     return raw.decode() if isinstance(raw, bytes) else raw
+
+
+# ── OAuth AS authorize 재개(authreq) 매핑 ─────────────────────
+# vegapunk가 AS일 때, /oauth/authorize에서 상류 로그인 세션이 없으면 상류 OAuth로
+# 보냈다가 콜백에서 authorize를 재개해야 한다. 상류 OAuth는 우리 authreq 파라미터를
+# 되돌려주지 않으므로, 상류 state ↔ authreq_id를 함께 보관해 콜백에서 복원한다.
+_AUTHREQ_STATE_PREFIX = "authreqstate:"
+
+
+async def stash_authreq_state(store, state: str, authreq_id: str) -> None:
+    await store.setex(_AUTHREQ_STATE_PREFIX + state, OAUTH_STATE_TTL, authreq_id)
+
+
+async def pop_authreq_state(store, state: str) -> str | None:
+    key = _AUTHREQ_STATE_PREFIX + state
+    raw = await store.get(key)
+    await store.delete(key)
+    if raw is None:
+        return None
+    return raw.decode() if isinstance(raw, bytes) else raw
